@@ -117,6 +117,8 @@ pub struct FangyuanStandardMaterialReference {
     pub mesh_key: FangyuanStandardMaterialReferenceMeshKey,
     pub material: StandardMaterial,
     pub composed_params: FangyuanMaterialInstanceParams,
+    /// The canonical resolved surface snapshot shared with the atlas path.
+    pub surface: super::ResolvedFangyuanSurfacePreset,
     pub diagnostic: FangyuanStandardMaterialReferenceDiagnostic,
 }
 
@@ -215,6 +217,7 @@ pub fn fangyuan_standard_material_reference(
         },
         material,
         composed_params,
+        surface: surface.preset,
         diagnostic,
     }
 }

@@ -27,12 +27,11 @@ fn tile_content_uv(local_uv: vec2<f32>, tile_index: u32) -> vec2<f32> {
     let tile_x = f32(tile_index % 16u);
     let tile_y = f32(tile_index / 16u);
     let repeated = fract(local_uv * material.surface.xy);
-    let cell_min = vec2<f32>(tile_x, tile_y) / 16.0;
-    let cell_size = vec2<f32>(1.0 / 16.0);
     // 2.5px..61.5px content centers in a 64px cell.
-    let content_min = cell_min + cell_size * (2.5 / 64.0);
-    let content_size = cell_size * (59.0 / 64.0);
-    return content_min + repeated * content_size;
+    let cell_origin_px = vec2<f32>(tile_x, tile_y) * 64.0;
+    let content_min = (cell_origin_px + vec2<f32>(2.5)) / 1024.0;
+    let content_max = (cell_origin_px + vec2<f32>(61.5)) / 1024.0;
+    return content_min + repeated * (content_max - content_min);
 }
 
 @fragment
@@ -42,6 +41,9 @@ fn fragment(vertex_output: VertexOutput) -> @location(0) vec4<f32> {
     local_uv = vertex_output.uv;
 #endif
     let uv = tile_content_uv(local_uv, material.tile_index);
+    // The base atlas is tagged sRGB by ImageLoaderSettings; Bevy's texture
+    // format performs the sRGB -> linear decode. There is no manual sRGB
+    // conversion here.
     let sampled = textureSample(color_atlas, color_sampler, uv).rgb;
     var rgb = sampled * material.tint.rgb;
 
@@ -51,8 +53,14 @@ fn fragment(vertex_output: VertexOutput) -> @location(0) vec4<f32> {
     if ((material.flags & 32u) != 0u) {
         rgb = mix(vec3<f32>(0.8, 0.2, 0.8), rgb, 0.35);
     }
+    // Base-only is the sampled atlas tile before profile tint. Final is the
+    // composed base plus the profile emissive term; no surface alpha or
+    // emissive is recomposed in the shader.
     if ((material.flags & 64u) != 0u) {
         rgb = sampled;
+    }
+    if ((material.flags & 128u) != 0u) {
+        rgb = rgb + material.emissive_alpha.rgb;
     }
     return vec4<f32>(rgb, material.tint.a);
 }

@@ -17,10 +17,39 @@ use std::collections::HashMap;
 
 use super::{
     FANGYUAN_NORMAL_SAMPLING_POLICY, FangyuanAtlasAssetCache, FangyuanAtlasChannel,
-    FangyuanAtlasImageState, FangyuanMaterialProfileRegistry, FangyuanPrimitive,
+    FangyuanAtlasImageState, FangyuanCubeFace, FangyuanMaterialProfileRegistry, FangyuanPrimitive,
     FangyuanStandardMaterialReference, FangyuanSurfacePresetFallbackReason,
-    FangyuanSurfacePresetRegistry, fangyuan_standard_material_reference,
+    FangyuanSurfacePresetRegistry, fangyuan_atlas_tile_content_uv_rect,
+    fangyuan_atlas_uv_from_local, fangyuan_cube_face_repeat, fangyuan_sphere_repeat,
+    fangyuan_standard_material_reference,
 };
+
+/// Compute the local repeat multiplier before mapping UVs into a tile.
+///
+/// Cubes use the stable front-face XY contract for this material-level value;
+/// the geometry contract still exposes per-face repeat for future instance or
+/// face attributes. Spheres use the shared Y-up circumference approximation.
+pub fn fangyuan_atlas_local_repeat(
+    kind: super::FangyuanPrimitiveKind,
+    primitive_world_size: Vec3,
+    reference_repeat_size_m: [f32; 2],
+) -> Option<Vec2> {
+    let reference = Vec2::from_array(reference_repeat_size_m);
+    match kind {
+        super::FangyuanPrimitiveKind::Cube => {
+            fangyuan_cube_face_repeat(FangyuanCubeFace::Front, primitive_world_size, reference)
+        }
+        super::FangyuanPrimitiveKind::Sphere => {
+            fangyuan_sphere_repeat(primitive_world_size, reference)
+        }
+    }
+}
+
+/// CPU mirror of the WGSL tile mapping. Keeping this helper beside the
+/// material makes texel-center and fract behavior testable without a GPU.
+pub fn fangyuan_atlas_material_uv(local_uv: Vec2, repeat: Vec2, tile_index: u16) -> Option<Vec2> {
+    fangyuan_atlas_uv_from_local(local_uv, repeat, tile_index)
+}
 
 /// Material flags are intentionally data, rather than shader variants.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -401,21 +430,19 @@ pub fn fangyuan_atlas_material_with_options(
         return FangyuanAtlasMaterialBuildResult::Fallback { reason, reference };
     }
 
-    // This second lookup is the same resolver call as the reference path; it
-    // only exposes noise index/repeat data absent from StandardMaterial.
-    let surface = surface_registry.resolve_with_noise(
-        primitive.surface_material_preset_id(),
-        primitive.surface_noise_enabled(),
-        None,
-    );
+    // The reference adapter owns this resolver result. The atlas path only
+    // projects the shared snapshot into its uniform layout.
+    let surface = &reference.surface;
+    let repeat =
+        fangyuan_atlas_local_repeat(primitive.kind(), primitive.scale(), surface.repeat_size_m)
+            .unwrap_or(Vec2::ONE);
     let tint = reference.composed_params.color.to_linear();
     let emissive = reference.material.emissive;
-    let normal_enabled = surface.preset.flags.normal_enabled
-        && surface.preset.normal_strength > 0.0
-        && atlas.normal().is_some();
+    let normal_enabled =
+        surface.flags.normal_enabled && surface.normal_strength > 0.0 && atlas.normal().is_some();
     let noise_enabled = primitive.surface_noise_enabled()
-        && surface.preset.flags.noise_available
-        && surface.preset.noise_tile_index.is_some()
+        && surface.flags.noise_available
+        && surface.noise_tile_index.is_some()
         && atlas.noise().is_some();
     let green_flip_y =
         FANGYUAN_NORMAL_SAMPLING_POLICY.standard_material_flip_normal_map_y(None) == Some(true);
@@ -438,28 +465,29 @@ pub fn fangyuan_atlas_material_with_options(
     }
 
     let noise_tile_index = surface
-        .preset
         .noise_tile_index
         .map(u32::from)
         .unwrap_or(FangyuanAtlasMaterialUniform::NOISE_TILE_SENTINEL);
     let uniform = FangyuanAtlasMaterialUniform {
         tint: Vec4::new(tint.red, tint.green, tint.blue, tint.alpha),
         surface: Vec4::new(
-            surface.preset.repeat_size_m[0],
-            surface.preset.repeat_size_m[1],
-            surface.preset.roughness.clamp(0.0, 1.0),
-            surface.preset.metallic.clamp(0.0, 1.0),
+            repeat.x,
+            repeat.y,
+            surface.roughness.clamp(0.0, 1.0),
+            surface.metallic.clamp(0.0, 1.0),
         ),
         // Noise strength is intentionally a reserved v0 value.  Stage 6 will
         // source catalog modulation constants without changing this layout.
         pbr: Vec4::new(
-            surface.preset.reflectance.clamp(0.0, 1.0),
-            surface.preset.ambient_occlusion.clamp(0.0, 1.0),
-            surface.preset.normal_strength.max(0.0),
+            surface.reflectance.clamp(0.0, 1.0),
+            // Catalog schema v1 requires AO=1.0. Keep the shader contract
+            // explicit even if future catalogs expose a diagnostic AO value.
+            1.0,
+            surface.normal_strength.max(0.0),
             if noise_enabled { 1.0 } else { 0.0 },
         ),
         emissive_alpha: Vec4::new(emissive.red, emissive.green, emissive.blue, tint.alpha),
-        tile_index: u32::from(surface.preset.surface_tile_index),
+        tile_index: u32::from(surface.surface_tile_index),
         noise_tile_index,
         flags: flags.bits(),
         _padding: 0,
@@ -694,5 +722,107 @@ mod tests {
         atlas.reload(&server, true);
         cache.clear(&mut assets);
         assert_eq!(cache.len(), 0);
+    }
+
+    #[test]
+    fn tile_uv_uses_texel_centers_and_stays_inside_requested_cell() {
+        let first = fangyuan_atlas_material_uv(Vec2::ZERO, Vec2::ONE, 0).unwrap();
+        let first_rect = super::fangyuan_atlas_tile_content_uv_rect(0).unwrap();
+        assert!(first.abs_diff_eq(first_rect.min, 1e-7));
+
+        let last =
+            fangyuan_atlas_material_uv(Vec2::new(0.999_999, 0.999_999), Vec2::ONE, 255).unwrap();
+        let last_rect = super::fangyuan_atlas_tile_content_uv_rect(255).unwrap();
+        assert!(last.x < last_rect.max.x && last.y < last_rect.max.y);
+        assert!(last.x > last_rect.min.x && last.y > last_rect.min.y);
+
+        let repeated =
+            fangyuan_atlas_material_uv(Vec2::new(1.0, 1.0), Vec2::splat(3.0), 16).unwrap();
+        let repeated_rect = super::fangyuan_atlas_tile_content_uv_rect(16).unwrap();
+        assert!(repeated.abs_diff_eq(repeated_rect.min, 1e-7));
+        assert!(repeated.x >= repeated_rect.min.x && repeated.x <= repeated_rect.max.x);
+        assert!(repeated.y >= repeated_rect.min.y && repeated.y <= repeated_rect.max.y);
+    }
+
+    #[test]
+    fn local_repeat_scales_world_size_and_reference_repeat_without_cross_tile_state() {
+        assert_eq!(
+            fangyuan_atlas_local_repeat(
+                FangyuanPrimitiveKind::Cube,
+                Vec3::new(2.0, 3.0, 4.0),
+                [1.0, 1.0]
+            ),
+            Some(Vec2::new(2.0, 3.0))
+        );
+        assert_eq!(
+            fangyuan_atlas_local_repeat(
+                FangyuanPrimitiveKind::Cube,
+                Vec3::new(2.0, 3.0, 4.0),
+                [2.0, 3.0]
+            ),
+            Some(Vec2::ONE)
+        );
+        let sphere = fangyuan_atlas_local_repeat(
+            FangyuanPrimitiveKind::Sphere,
+            Vec3::splat(2.0),
+            [1.0, 1.0],
+        )
+        .unwrap();
+        assert!(sphere.x > 6.0 && sphere.y > 2.0);
+        assert!(
+            fangyuan_atlas_local_repeat(FangyuanPrimitiveKind::Cube, Vec3::NAN, [1.0, 1.0])
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn uniform_projects_reference_pbr_and_profile_alpha_emissive_once() {
+        let registry = load_first_package_fangyuan_surface_preset_registry().unwrap();
+        let profiles = FangyuanMaterialProfileRegistry::default();
+        let atlas = ready_atlas_cache();
+        let primitive = primitive(Some("material:surface/x00/y01"), false);
+        let reference =
+            fangyuan_standard_material_reference(&primitive, &registry, &profiles, &atlas);
+        let FangyuanAtlasMaterialBuildResult::Ready(build) =
+            fangyuan_atlas_material(&primitive, &registry, &profiles, &atlas)
+        else {
+            panic!("expected atlas material build");
+        };
+        assert_eq!(
+            build.material.uniform.roughness(),
+            reference.surface.roughness
+        );
+        assert_eq!(
+            build.material.uniform.metallic(),
+            reference.surface.metallic
+        );
+        assert_eq!(
+            build.material.uniform.reflectance(),
+            reference.surface.reflectance
+        );
+        assert_eq!(build.material.uniform.ambient_occlusion(), 1.0);
+        let tint = reference.composed_params.color.to_linear();
+        assert_eq!(
+            build.material.uniform.tint,
+            Vec4::new(tint.red, tint.green, tint.blue, tint.alpha)
+        );
+        assert_eq!(
+            build.material.uniform.emissive_alpha.w,
+            reference.composed_params.alpha
+        );
+    }
+
+    #[test]
+    fn shader_source_documents_exact_tile_mapping_srgb_and_debug_outputs() {
+        const SHADER: &str = include_str!("../../../assets/shaders/fangyuan_atlas_material.wgsl");
+        assert!(SHADER.contains("fract(local_uv * material.surface.xy)"));
+        assert!(SHADER.contains("vec2<f32>(2.5)"));
+        assert!(SHADER.contains("vec2<f32>(61.5)"));
+        assert!(SHADER.contains("/ 1024.0"));
+        assert!(SHADER.contains("textureSample(color_atlas, color_sampler, uv).rgb"));
+        assert!(SHADER.contains("sampled * material.tint.rgb"));
+        assert!(SHADER.contains("material.flags & 64u"));
+        assert!(SHADER.contains("material.flags & 128u"));
+        assert!(SHADER.contains("no manual sRGB"));
     }
 }
