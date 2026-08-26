@@ -1,6 +1,6 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [ValidateSet("desktop", "headless", "fangyuan-bake", "ui-preview", "test", "release", "android")]
+    [ValidateSet("desktop", "headless", "fangyuan-bake", "fangyuan-authoring", "ui-preview", "test", "release", "android")]
     [string]$Target = "desktop",
     [ValidateSet("check", "build", "run")]
     [string]$Action = "check",
@@ -96,6 +96,7 @@ $binary = switch ($Target) {
     "desktop" { "project" }
     "headless" { "lockstep-sim-headless" }
     "fangyuan-bake" { "fangyuan_bake" }
+    "fangyuan-authoring" { "fangyuan_authoring" }
     "ui-preview" { "ui-document-preview" }
     "release" { "project" }
 }
@@ -108,6 +109,9 @@ $effectiveProfile = if ($Target -eq "release") { "release" } elseif ($DesktopFas
 $effectiveProfileArguments = if ($effectiveProfile -eq "dev") { @() } else { @("--profile", $effectiveProfile) }
 $featureArguments = if ($Target -eq "ui-preview") {
     @("--features", "ui-document-preview-tool")
+}
+elseif ($Target -eq "fangyuan-authoring") {
+    @("--features", "fangyuan-authoring-tool")
 }
 elseif ($DesktopFast -and -not $isWindowsHost) {
     @("--features", "bevy/dynamic_linking")

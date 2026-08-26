@@ -19,6 +19,7 @@ resolver = "3"
 
 [features]
 default = []
+fangyuan-authoring-tool = []
 ui-document-preview-tool = []
 
 [lib]
@@ -36,6 +37,11 @@ path = "src/bin/lockstep-sim-headless.rs"
 [[bin]]
 name = "fangyuan_bake"
 path = "src/bin/fangyuan_bake.rs"
+
+[[bin]]
+name = "fangyuan_authoring"
+path = "src/bin/fangyuan_authoring.rs"
+required-features = ["fangyuan-authoring-tool"]
 
 [[bin]]
 name = "ui-document-preview"
@@ -75,6 +81,7 @@ ui-document-core = { path = "../tools/ui-document-core" }
 
 [dev-dependencies]
 schemars = "1"
+tempfile = "3"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 arboard = "3.6"

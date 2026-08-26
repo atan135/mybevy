@@ -12,6 +12,8 @@
 
 mod asset_path;
 mod audit;
+#[cfg(not(target_os = "android"))]
+mod authoring;
 mod avatar;
 mod bake;
 mod blueprint;
@@ -52,6 +54,8 @@ mod visual_replay;
 
 pub use asset_path::*;
 pub use audit::*;
+#[cfg(not(target_os = "android"))]
+pub use authoring::*;
 pub use avatar::*;
 pub use bake::*;
 pub use blueprint::*;
