@@ -16,12 +16,13 @@ use bevy::{
 use std::collections::HashMap;
 
 use super::{
-    FANGYUAN_NORMAL_SAMPLING_POLICY, FangyuanAtlasAssetCache, FangyuanAtlasChannel,
-    FangyuanAtlasImageState, FangyuanCubeFace, FangyuanMaterialProfileRegistry,
-    FangyuanNormalGreenDirection, FangyuanPrimitive, FangyuanStandardMaterialReference,
-    FangyuanSurfacePresetFallbackReason, FangyuanSurfacePresetRegistry,
-    fangyuan_atlas_tile_content_uv_rect, fangyuan_atlas_uv_from_local, fangyuan_cube_face_repeat,
-    fangyuan_sphere_repeat, fangyuan_standard_material_reference,
+    FANGYUAN_ATLAS_COLUMNS, FANGYUAN_ATLAS_ROWS, FANGYUAN_NORMAL_SAMPLING_POLICY,
+    FangyuanAtlasAssetCache, FangyuanAtlasChannel, FangyuanAtlasImageState, FangyuanCubeFace,
+    FangyuanMaterialProfileRegistry, FangyuanNormalGreenDirection, FangyuanPrimitive,
+    FangyuanStandardMaterialReference, FangyuanSurfacePresetFallbackReason,
+    FangyuanSurfacePresetRegistry, fangyuan_atlas_tile_content_uv_rect,
+    fangyuan_atlas_uv_from_local, fangyuan_cube_face_repeat, fangyuan_sphere_repeat,
+    fangyuan_standard_material_reference,
 };
 
 /// Compute the local repeat multiplier before mapping UVs into a tile.
@@ -86,6 +87,27 @@ pub fn fangyuan_noise_tile_content_uv_rect(tile_index: u16) -> Option<(Vec2, Vec
     Some((rect.min, rect.max))
 }
 
+pub const FANGYUAN_ATLAS_GALLERY_SURFACE_TILE_COUNT: usize = 256;
+pub const FANGYUAN_ATLAS_GALLERY_NOISE_TILE_COUNT: usize = 122;
+
+/// Bounded development-gallery index lists. These are index-only values and
+/// do not allocate materials, entities, or image handles per tile.
+pub fn fangyuan_atlas_gallery_surface_tile_indices() -> Vec<u16> {
+    (0..FANGYUAN_ATLAS_GALLERY_SURFACE_TILE_COUNT as u16).collect()
+}
+
+pub fn fangyuan_atlas_gallery_noise_tile_indices() -> Vec<u16> {
+    (0..(FANGYUAN_ATLAS_COLUMNS * FANGYUAN_ATLAS_ROWS))
+        .filter(|index| fangyuan_noise_tile_content_uv_rect(*index).is_some())
+        .collect()
+}
+
+pub fn fangyuan_atlas_gallery_reserved_noise_tile_indices() -> Vec<u16> {
+    (0..(FANGYUAN_ATLAS_COLUMNS * FANGYUAN_ATLAS_ROWS))
+        .filter(|index| fangyuan_noise_tile_content_uv_rect(*index).is_none())
+        .collect()
+}
+
 /// Material flags are intentionally data, rather than shader variants.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FangyuanAtlasMaterialFlags(u32);
@@ -101,6 +123,7 @@ impl FangyuanAtlasMaterialFlags {
     pub const DEBUG_FINAL: Self = Self(1 << 7);
     pub const DEBUG_NORMAL_ONLY: Self = Self(1 << 8);
     pub const DEBUG_NOISE_ONLY: Self = Self(1 << 9);
+    pub const SPECIAL_UNLIT: Self = Self(1 << 10);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -207,6 +230,12 @@ pub struct FangyuanAtlasMaterialSemantic {
     pub fallback_reason: Option<FangyuanSurfacePresetFallbackReason>,
     pub uniform: FangyuanAtlasMaterialUniform,
     pub atlas_fallback_flags: super::FangyuanAtlasFallbackFlags,
+    pub surface_tile_id: String,
+    pub projection: super::FangyuanCatalogProjection,
+    pub projection_requested: super::FangyuanCatalogProjection,
+    pub projection_fallback_reason: Option<String>,
+    pub render_model: super::FangyuanCatalogRenderModel,
+    pub render_model_fallback: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -216,6 +245,7 @@ pub enum FangyuanAtlasMaterialFallbackReason {
     MissingBaseColorAtlas,
     MissingNormalAtlas,
     MissingNoiseAtlas,
+    UnsupportedSpecialSurface,
     ShaderUnavailable,
     UnsupportedCapability,
 }
@@ -228,6 +258,7 @@ impl std::fmt::Display for FangyuanAtlasMaterialFallbackReason {
             Self::MissingBaseColorAtlas => "missing_base_color_atlas",
             Self::MissingNormalAtlas => "missing_normal_atlas",
             Self::MissingNoiseAtlas => "missing_noise_atlas",
+            Self::UnsupportedSpecialSurface => "unsupported_special_surface",
             Self::ShaderUnavailable => "shader_unavailable",
             Self::UnsupportedCapability => "unsupported_capability",
         };
@@ -492,6 +523,16 @@ pub fn fangyuan_atlas_material_with_normal_override(
         return FangyuanAtlasMaterialBuildResult::Fallback { reason, reference };
     }
 
+    // Dedicated sky/background shading is intentionally deferred. Keep the
+    // reference adapter's explicit unlit/default fallback instead of binding
+    // a PBR atlas material that would claim unsupported semantics.
+    if reference.diagnostic.render_model_fallback.as_deref() == Some("unlit_default") {
+        return FangyuanAtlasMaterialBuildResult::Fallback {
+            reason: FangyuanAtlasMaterialFallbackReason::UnsupportedSpecialSurface,
+            reference,
+        };
+    }
+
     // The reference adapter owns this resolver result. The atlas path only
     // projects the shared snapshot into its uniform layout.
     let surface = &reference.surface;
@@ -602,6 +643,12 @@ pub fn fangyuan_atlas_material_with_normal_override(
             fallback_reason: reference.diagnostic.fallback_reason.clone(),
             uniform,
             atlas_fallback_flags: atlas.status().fallback_flags,
+            surface_tile_id: reference.diagnostic.surface_tile_id.clone(),
+            projection: reference.diagnostic.projection,
+            projection_requested: reference.diagnostic.projection_requested,
+            projection_fallback_reason: reference.diagnostic.projection_fallback_reason.clone(),
+            render_model: reference.diagnostic.render_model,
+            render_model_fallback: reference.diagnostic.render_model_fallback.clone(),
         },
     })
 }

@@ -8,29 +8,29 @@ use std::{
 use crate::framework::{
     fangyuan::{
         FANGYUAN_HOME_PREFAB_PALETTE_PATH, FANGYUAN_HOME_SCENE_LAYOUT_PATH, FangyuanAoiConfig,
-        FangyuanAtlasAssetCache, FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity,
-        FangyuanAuditStatus, FangyuanChunkAvailablePrefabs, FangyuanChunkClearReason,
-        FangyuanChunkCommand, FangyuanChunkDebugSummary, FangyuanChunkEvent,
-        FangyuanChunkManifestRuntime, FangyuanChunkRuntime, FangyuanChunkSourceLibrary,
-        FangyuanDebugPanelState, FangyuanHotspotState, FangyuanHotspotThresholds,
-        FangyuanLodIntegrationSummary, FangyuanLodObjectKind, FangyuanLodRenderDescriptor,
-        FangyuanLodRenderPath, FangyuanMaterialInstanceParams, FangyuanMaterialProfileRegistry,
-        FangyuanObjectClass, FangyuanObjectState, FangyuanObjectTrialRuntime,
-        FangyuanObjectTrialSummary, FangyuanObjectTrialVisualPrimitive, FangyuanPrimitive,
-        FangyuanPrimitiveKind, FangyuanPrimitiveSet, FangyuanPrimitiveSetStats,
-        FangyuanRenderAssetCache, FangyuanSceneLayoutCompileReport,
-        FangyuanStandardMaterialReferenceCache, FangyuanStandardMaterialReferenceCacheError,
-        FangyuanStaticInstanceBufferSource, FangyuanStaticInstanceRenderBatch,
-        FangyuanStaticInstanceRenderError, FangyuanStaticInstanceRenderOptions,
-        FangyuanStaticInstanceRenderReport, FangyuanStaticInstanceRenderStats,
-        FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds, FangyuanStaticMeshBuildError,
-        FangyuanStaticMeshBuildOptions, FangyuanStaticMeshBuildReport,
-        FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial, FangyuanStaticMeshMetadata,
-        FangyuanSurfacePresetRegistry, FangyuanTrialBudgetProfileKind, evaluate_fangyuan_hotspot,
-        fangyuan_atlas_catalog_available, fangyuan_lod_descriptor_from_trial_visual,
-        fangyuan_lod_descriptors_from_primitive_set, fangyuan_render_transform_from_primitive,
-        fangyuan_standard_material_from_color, fangyuan_standard_material_from_params,
-        fangyuan_standard_material_reference,
+        FangyuanAtlasAssetCache, FangyuanAtlasGalleryCatalog, FangyuanAtlasGalleryState,
+        FangyuanAuditFinding, FangyuanAuditReport, FangyuanAuditSeverity, FangyuanAuditStatus,
+        FangyuanChunkAvailablePrefabs, FangyuanChunkClearReason, FangyuanChunkCommand,
+        FangyuanChunkDebugSummary, FangyuanChunkEvent, FangyuanChunkManifestRuntime,
+        FangyuanChunkRuntime, FangyuanChunkSourceLibrary, FangyuanDebugPanelState,
+        FangyuanHotspotState, FangyuanHotspotThresholds, FangyuanLodIntegrationSummary,
+        FangyuanLodObjectKind, FangyuanLodRenderDescriptor, FangyuanLodRenderPath,
+        FangyuanMaterialInstanceParams, FangyuanMaterialProfileRegistry, FangyuanObjectClass,
+        FangyuanObjectState, FangyuanObjectTrialRuntime, FangyuanObjectTrialSummary,
+        FangyuanObjectTrialVisualPrimitive, FangyuanPrimitive, FangyuanPrimitiveKind,
+        FangyuanPrimitiveSet, FangyuanPrimitiveSetStats, FangyuanRenderAssetCache,
+        FangyuanSceneLayoutCompileReport, FangyuanStandardMaterialReferenceCache,
+        FangyuanStandardMaterialReferenceCacheError, FangyuanStaticInstanceBufferSource,
+        FangyuanStaticInstanceRenderBatch, FangyuanStaticInstanceRenderError,
+        FangyuanStaticInstanceRenderOptions, FangyuanStaticInstanceRenderReport,
+        FangyuanStaticInstanceRenderStats, FangyuanStaticMergeSourceRef, FangyuanStaticMeshBounds,
+        FangyuanStaticMeshBuildError, FangyuanStaticMeshBuildOptions,
+        FangyuanStaticMeshBuildReport, FangyuanStaticMeshBuildStats, FangyuanStaticMeshMaterial,
+        FangyuanStaticMeshMetadata, FangyuanSurfacePresetRegistry, FangyuanTrialBudgetProfileKind,
+        evaluate_fangyuan_hotspot, fangyuan_atlas_catalog_available,
+        fangyuan_lod_descriptor_from_trial_visual, fangyuan_lod_descriptors_from_primitive_set,
+        fangyuan_render_transform_from_primitive, fangyuan_standard_material_from_color,
+        fangyuan_standard_material_from_params, fangyuan_standard_material_reference,
         fangyuan_static_instance_render_report_from_primitive_set_with_source,
         fangyuan_static_meshes_from_primitive_set_with_source, format_fangyuan_audit_debug_lines,
         hotspot_metrics_from_descriptors, load_fangyuan_home_prefab_palette,
@@ -67,6 +67,8 @@ impl Plugin for FangyuanHomePlugin {
             .init_resource::<FangyuanHomeLodIntegrationRuntime>()
             .init_resource::<FangyuanHomeBlueprintStats>()
             .init_resource::<FangyuanDebugPanelState>()
+            .init_resource::<FangyuanAtlasGalleryState>()
+            .init_resource::<FangyuanAtlasGalleryCatalog>()
             .init_resource::<FangyuanChunkRuntime>()
             .init_resource::<FangyuanChunkSourceLibrary>()
             .init_resource::<FangyuanChunkManifestRuntime>()
@@ -93,8 +95,10 @@ impl Plugin for FangyuanHomePlugin {
 fn ensure_fangyuan_home_atlas_assets(
     asset_server: Res<AssetServer>,
     mut blueprint_assets: ResMut<FangyuanHomeBlueprintRenderAssets>,
+    mut gallery_catalog: ResMut<FangyuanAtlasGalleryCatalog>,
 ) {
     blueprint_assets.ensure_atlas(&asset_server);
+    gallery_catalog.ensure_loaded();
 }
 
 #[derive(Clone, Copy, Debug, Message, PartialEq, Eq)]
@@ -3056,6 +3060,7 @@ fn clear_fangyuan_home_trial_visuals<'world>(
 fn reset_fangyuan_home_blueprint_stats_on_exit(
     mut scene_events: MessageReader<SceneEvent>,
     mut blueprint_stats: ResMut<FangyuanHomeBlueprintStats>,
+    mut gallery_state: Option<ResMut<FangyuanAtlasGalleryState>>,
 ) {
     for event in scene_events.read() {
         let SceneEvent::Exited(exited) = event else {
@@ -3071,6 +3076,9 @@ fn reset_fangyuan_home_blueprint_stats_on_exit(
                 "fangyuan home blueprint stats reset after scene exit: session={}",
                 exited.session_id
             );
+        }
+        if let Some(gallery_state) = gallery_state.as_deref_mut() {
+            *gallery_state = FangyuanAtlasGalleryState::default();
         }
     }
 }

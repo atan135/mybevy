@@ -13,7 +13,11 @@ use crate::framework::ui::document::UiDocumentRuntime;
 
 use crate::framework::{
     audio::AudioMixer,
-    fangyuan::{FangyuanDebugPanelModule, FangyuanDebugPanelState, FangyuanPlayerPosition},
+    fangyuan::{
+        FangyuanAtlasGalleryChannel, FangyuanAtlasGalleryState, FangyuanDebugPanelModule,
+        FangyuanDebugPanelState, FangyuanPlayerPosition,
+        load_first_package_fangyuan_surface_preset_registry,
+    },
     scene::prelude::{SceneCommand, SceneExitRequest},
     ui::{
         core::{UiOwnerId, UiPanelCommand, binding::UiBindingValues, focus::UiFocusState},
@@ -214,6 +218,22 @@ pub(super) const ACTION_FANGYUAN_HOME_RERUN_TRIAL: &str = "fangyuan_home.rerun_t
 pub(super) const ACTION_FANGYUAN_HOME_SWITCH_BUDGET: &str = "fangyuan_home.switch_trial_budget";
 pub(super) const ACTION_FANGYUAN_HOME_TOGGLE_DEBUG: &str = "fangyuan_home.toggle_debug";
 pub(super) const ACTION_FANGYUAN_HOME_TOGGLE_MODULE: &str = "fangyuan_home.toggle_debug_module";
+pub(super) const ACTION_FANGYUAN_HOME_GALLERY_PREV_SURFACE: &str =
+    "fangyuan_home.gallery_prev_surface";
+pub(super) const ACTION_FANGYUAN_HOME_GALLERY_NEXT_SURFACE: &str =
+    "fangyuan_home.gallery_next_surface";
+pub(super) const ACTION_FANGYUAN_HOME_GALLERY_PREV_NOISE: &str = "fangyuan_home.gallery_prev_noise";
+pub(super) const ACTION_FANGYUAN_HOME_GALLERY_NEXT_NOISE: &str = "fangyuan_home.gallery_next_noise";
+pub(super) const ACTION_FANGYUAN_HOME_GALLERY_PREV_RESERVED: &str =
+    "fangyuan_home.gallery_prev_reserved";
+pub(super) const ACTION_FANGYUAN_HOME_GALLERY_NEXT_RESERVED: &str =
+    "fangyuan_home.gallery_next_reserved";
+pub(super) const ACTION_FANGYUAN_HOME_GALLERY_SET_CHANNEL: &str =
+    "fangyuan_home.gallery_set_channel";
+pub(super) const ACTION_FANGYUAN_HOME_GALLERY_PREV_PRESET: &str =
+    "fangyuan_home.gallery_prev_preset";
+pub(super) const ACTION_FANGYUAN_HOME_GALLERY_NEXT_PRESET: &str =
+    "fangyuan_home.gallery_next_preset";
 pub(super) const ACTION_FANGYUAN_HOME_RETURN_LOBBY: &str = "fangyuan_home.return_lobby";
 
 const DEFAULT_AUDIT_PROFILES: [&str; 4] = [
@@ -276,6 +296,32 @@ const HOME_RERUN_NODE: &str = "fangyuan_home.rerun_trial_audit";
 const HOME_BUDGET_NODE: &str = "fangyuan_home.switch_trial_budget";
 const HOME_DEBUG_NODE: &str = "fangyuan_home.toggle_debug";
 const HOME_RETURN_NODE: &str = "fangyuan_home.return_lobby";
+const HOME_GALLERY_PREV_SURFACE_NODE: &str = "fangyuan_home.gallery_prev_surface";
+const HOME_GALLERY_NEXT_SURFACE_NODE: &str = "fangyuan_home.gallery_next_surface";
+const HOME_GALLERY_PREV_NOISE_NODE: &str = "fangyuan_home.gallery_prev_noise";
+const HOME_GALLERY_NEXT_NOISE_NODE: &str = "fangyuan_home.gallery_next_noise";
+const HOME_GALLERY_PREV_RESERVED_NODE: &str = "fangyuan_home.gallery_prev_reserved";
+const HOME_GALLERY_NEXT_RESERVED_NODE: &str = "fangyuan_home.gallery_next_reserved";
+const HOME_GALLERY_CHANNEL_SOURCES: [(&str, FangyuanAtlasGalleryChannel); 4] = [
+    (
+        "fangyuan_home.channel_final",
+        FangyuanAtlasGalleryChannel::Final,
+    ),
+    (
+        "fangyuan_home.channel_base",
+        FangyuanAtlasGalleryChannel::Base,
+    ),
+    (
+        "fangyuan_home.channel_normal",
+        FangyuanAtlasGalleryChannel::Normal,
+    ),
+    (
+        "fangyuan_home.channel_noise",
+        FangyuanAtlasGalleryChannel::Noise,
+    ),
+];
+const HOME_GALLERY_PREV_PRESET_NODE: &str = "fangyuan_home.gallery_prev_preset";
+const HOME_GALLERY_NEXT_PRESET_NODE: &str = "fangyuan_home.gallery_next_preset";
 
 const HOME_MODULE_SOURCES: [(&str, FangyuanDebugPanelModule); 6] = [
     (
@@ -793,6 +839,15 @@ pub(super) fn gameplay_declarative_screen_hosts(
                 ACTION_FANGYUAN_HOME_SWITCH_BUDGET,
                 ACTION_FANGYUAN_HOME_TOGGLE_DEBUG,
                 ACTION_FANGYUAN_HOME_TOGGLE_MODULE,
+                ACTION_FANGYUAN_HOME_GALLERY_PREV_SURFACE,
+                ACTION_FANGYUAN_HOME_GALLERY_NEXT_SURFACE,
+                ACTION_FANGYUAN_HOME_GALLERY_PREV_NOISE,
+                ACTION_FANGYUAN_HOME_GALLERY_NEXT_NOISE,
+                ACTION_FANGYUAN_HOME_GALLERY_PREV_RESERVED,
+                ACTION_FANGYUAN_HOME_GALLERY_NEXT_RESERVED,
+                ACTION_FANGYUAN_HOME_GALLERY_SET_CHANNEL,
+                ACTION_FANGYUAN_HOME_GALLERY_PREV_PRESET,
+                ACTION_FANGYUAN_HOME_GALLERY_NEXT_PRESET,
                 ACTION_FANGYUAN_HOME_RETURN_LOBBY,
             ],
         ),
@@ -1037,6 +1092,54 @@ pub(super) fn gameplay_action_descriptors() -> Vec<UiActionDescriptor> {
         action(
             FANGYUAN_HOME_DOCUMENT_ID,
             OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_SURFACE,
+            HOME_GALLERY_PREV_SURFACE_NODE,
+        ),
+        action(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_SURFACE,
+            HOME_GALLERY_NEXT_SURFACE_NODE,
+        ),
+        action(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_NOISE,
+            HOME_GALLERY_PREV_NOISE_NODE,
+        ),
+        action(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_NOISE,
+            HOME_GALLERY_NEXT_NOISE_NODE,
+        ),
+        action(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_RESERVED,
+            HOME_GALLERY_PREV_RESERVED_NODE,
+        ),
+        action(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_RESERVED,
+            HOME_GALLERY_NEXT_RESERVED_NODE,
+        ),
+        action(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_PRESET,
+            HOME_GALLERY_PREV_PRESET_NODE,
+        ),
+        action(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_PRESET,
+            HOME_GALLERY_NEXT_PRESET_NODE,
+        ),
+        action(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
             ACTION_FANGYUAN_HOME_RETURN_LOBBY,
             HOME_RETURN_NODE,
         ),
@@ -1059,6 +1162,28 @@ pub(super) fn gameplay_action_descriptors() -> Vec<UiActionDescriptor> {
                 values: HOME_MODULE_SOURCES
                     .iter()
                     .map(|(_, module)| module.as_str().to_owned())
+                    .collect(),
+            }),
+        ),
+    );
+    descriptors.push(
+        UiActionDescriptor::new(
+            UiActionId::from_str(ACTION_FANGYUAN_HOME_GALLERY_SET_CHANNEL).unwrap(),
+            UiDocumentId::from_str(FANGYUAN_HOME_DOCUMENT_ID).unwrap(),
+            OWNER_FANGYUAN_HOME.as_str(),
+            business_command(ACTION_FANGYUAN_HOME_GALLERY_SET_CHANNEL),
+        )
+        .with_sources(
+            HOME_GALLERY_CHANNEL_SOURCES
+                .iter()
+                .map(|(source, _)| UiNodeId::from_str(source).unwrap()),
+        )
+        .with_param(
+            "channel",
+            UiActionParamSchema::required(UiActionParamType::Enum {
+                values: HOME_GALLERY_CHANNEL_SOURCES
+                    .iter()
+                    .map(|(_, channel)| channel.as_str().to_owned())
                     .collect(),
             }),
         ),
@@ -1154,6 +1279,7 @@ pub(super) fn recover_from_main_world_mail_failure(
 
 pub(super) fn handle_gameplay_hud_document_actions(
     mut debug_panel_state: ResMut<FangyuanDebugPanelState>,
+    mut gallery_state: Option<ResMut<FangyuanAtlasGalleryState>>,
     mut robot_visibility: ResMut<super::robot_sync_scene::RobotSyncHudVisibility>,
     mut blueprint_commands: MessageWriter<FangyuanHomeBlueprintCommand>,
     mut scene_commands: MessageWriter<SceneCommand>,
@@ -1170,6 +1296,12 @@ pub(super) fn handle_gameplay_hud_document_actions(
 ) {
     let mut main_world_transition_requested = false;
     for dispatch in actions.read() {
+        if let Some(channel) = gallery_channel_action(dispatch) {
+            if let Some(gallery_state) = gallery_state.as_deref_mut() {
+                gallery_state.set_channel(channel);
+            }
+            continue;
+        }
         if let Some(module) = debug_module_action(dispatch) {
             debug_panel_state.toggle_module(module);
             continue;
@@ -1336,6 +1468,46 @@ pub(super) fn handle_gameplay_hud_document_actions(
             }
             ACTION_FANGYUAN_HOME_TOGGLE_DEBUG => {
                 debug_panel_state.toggle_visible();
+            }
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_SURFACE => {
+                if let Some(gallery_state) = gallery_state.as_deref_mut() {
+                    gallery_state.cycle_surface_tile(-1);
+                }
+            }
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_SURFACE => {
+                if let Some(gallery_state) = gallery_state.as_deref_mut() {
+                    gallery_state.cycle_surface_tile(1);
+                }
+            }
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_NOISE => {
+                if let Some(gallery_state) = gallery_state.as_deref_mut() {
+                    gallery_state.cycle_noise_tile(-1);
+                }
+            }
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_NOISE => {
+                if let Some(gallery_state) = gallery_state.as_deref_mut() {
+                    gallery_state.cycle_noise_tile(1);
+                }
+            }
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_RESERVED => {
+                if let Some(gallery_state) = gallery_state.as_deref_mut() {
+                    cycle_gallery_reserved_noise_tile(gallery_state, -1);
+                }
+            }
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_RESERVED => {
+                if let Some(gallery_state) = gallery_state.as_deref_mut() {
+                    cycle_gallery_reserved_noise_tile(gallery_state, 1);
+                }
+            }
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_PRESET => {
+                if let Some(gallery_state) = gallery_state.as_deref_mut() {
+                    cycle_gallery_preset(gallery_state, -1);
+                }
+            }
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_PRESET => {
+                if let Some(gallery_state) = gallery_state.as_deref_mut() {
+                    cycle_gallery_preset(gallery_state, 1);
+                }
             }
             _ => {}
         }
@@ -1508,6 +1680,46 @@ fn zero_param_action_matches_contract(action: &UiActionDispatch) -> bool {
         ) | (
             FANGYUAN_HOME_DOCUMENT_ID,
             "fangyuan_home",
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_SURFACE,
+            HOME_GALLERY_PREV_SURFACE_NODE,
+        ) | (
+            FANGYUAN_HOME_DOCUMENT_ID,
+            "fangyuan_home",
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_SURFACE,
+            HOME_GALLERY_NEXT_SURFACE_NODE,
+        ) | (
+            FANGYUAN_HOME_DOCUMENT_ID,
+            "fangyuan_home",
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_NOISE,
+            HOME_GALLERY_PREV_NOISE_NODE,
+        ) | (
+            FANGYUAN_HOME_DOCUMENT_ID,
+            "fangyuan_home",
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_NOISE,
+            HOME_GALLERY_NEXT_NOISE_NODE,
+        ) | (
+            FANGYUAN_HOME_DOCUMENT_ID,
+            "fangyuan_home",
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_RESERVED,
+            HOME_GALLERY_PREV_RESERVED_NODE,
+        ) | (
+            FANGYUAN_HOME_DOCUMENT_ID,
+            "fangyuan_home",
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_RESERVED,
+            HOME_GALLERY_NEXT_RESERVED_NODE,
+        ) | (
+            FANGYUAN_HOME_DOCUMENT_ID,
+            "fangyuan_home",
+            ACTION_FANGYUAN_HOME_GALLERY_PREV_PRESET,
+            HOME_GALLERY_PREV_PRESET_NODE,
+        ) | (
+            FANGYUAN_HOME_DOCUMENT_ID,
+            "fangyuan_home",
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_PRESET,
+            HOME_GALLERY_NEXT_PRESET_NODE,
+        ) | (
+            FANGYUAN_HOME_DOCUMENT_ID,
+            "fangyuan_home",
             ACTION_FANGYUAN_HOME_RETURN_LOBBY,
             HOME_RETURN_NODE,
         )
@@ -1538,6 +1750,56 @@ fn debug_module_action(action: &UiActionDispatch) -> Option<FangyuanDebugPanelMo
         (action.source_node.as_str() == *source && module.as_str() == module_name)
             .then_some(*module)
     })
+}
+
+fn gallery_channel_action(action: &UiActionDispatch) -> Option<FangyuanAtlasGalleryChannel> {
+    if !business_target_matches_action(action)
+        || action.document_id.as_str() != FANGYUAN_HOME_DOCUMENT_ID
+        || action.owner.as_str() != OWNER_FANGYUAN_HOME.as_str()
+        || action.action.as_str() != ACTION_FANGYUAN_HOME_GALLERY_SET_CHANNEL
+        || action.params.len() != 1
+    {
+        return None;
+    }
+    let UiActionValue::Enum(channel_name) = action.params.get("channel")? else {
+        return None;
+    };
+    HOME_GALLERY_CHANNEL_SOURCES
+        .iter()
+        .find_map(|(source, channel)| {
+            (action.source_node.as_str() == *source && channel.as_str() == channel_name)
+                .then_some(*channel)
+        })
+}
+
+fn cycle_gallery_reserved_noise_tile(state: &mut FangyuanAtlasGalleryState, delta: i32) {
+    let indices = crate::framework::fangyuan::fangyuan_atlas_gallery_reserved_noise_tile_indices();
+    if indices.is_empty() {
+        return;
+    }
+    let current = state
+        .reserved_noise_tile_index
+        .and_then(|index| indices.iter().position(|candidate| *candidate == index))
+        .unwrap_or(0) as i32;
+    let next = (current + delta).rem_euclid(indices.len() as i32) as usize;
+    let _ = state.select_reserved_noise_tile(indices[next]);
+}
+
+fn cycle_gallery_preset(state: &mut FangyuanAtlasGalleryState, delta: i32) {
+    let Ok(registry) = load_first_package_fangyuan_surface_preset_registry() else {
+        return;
+    };
+    let ids = registry.preset_ids();
+    if ids.is_empty() {
+        return;
+    }
+    let current = state
+        .selected_preset_id
+        .as_deref()
+        .and_then(|id| ids.iter().position(|candidate| candidate == id))
+        .unwrap_or(0) as i32;
+    let next = (current + delta).rem_euclid(ids.len() as i32) as usize;
+    let _ = state.select_preset(&registry, &ids[next]);
 }
 
 pub(super) fn set_binding(
@@ -2758,7 +3020,7 @@ mod tests {
     #[test]
     fn gameplay_actions_are_closed_to_exact_sources_and_module_values() {
         let descriptors = gameplay_action_descriptors();
-        assert_eq!(descriptors.len(), 26);
+        assert_eq!(descriptors.len(), 35);
         assert!(
             descriptors
                 .iter()
@@ -2865,6 +3127,79 @@ mod tests {
             read_messages::<GameRouteCommand>(&app).as_slice(),
             [GameRouteCommand::ChangeMode(AppUiMode::Lobby)]
         ));
+    }
+
+    #[test]
+    fn fangyuan_gallery_actions_update_only_bounded_valid_state() {
+        let mut app = action_test_app();
+        app.world_mut().write_message(dispatch(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_SURFACE,
+            HOME_GALLERY_NEXT_SURFACE_NODE,
+            BTreeMap::new(),
+        ));
+        app.world_mut().write_message(dispatch(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_NOISE,
+            HOME_GALLERY_NEXT_NOISE_NODE,
+            BTreeMap::new(),
+        ));
+        app.world_mut().write_message(dispatch(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_SET_CHANNEL,
+            HOME_GALLERY_CHANNEL_SOURCES[2].0,
+            BTreeMap::from([(
+                "channel".to_owned(),
+                UiActionValue::Enum("normal".to_owned()),
+            )]),
+        ));
+        app.world_mut().write_message(dispatch(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_PRESET,
+            HOME_GALLERY_NEXT_PRESET_NODE,
+            BTreeMap::new(),
+        ));
+        app.world_mut().write_message(dispatch(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_RESERVED,
+            HOME_GALLERY_NEXT_RESERVED_NODE,
+            BTreeMap::new(),
+        ));
+        app.update();
+
+        let before = {
+            let state = app.world().resource::<FangyuanAtlasGalleryState>();
+            assert_eq!(state.surface_tile_index, 1);
+            assert!(state.noise_tile_index.is_none());
+            assert!(state.reserved_noise_tile_index.is_some());
+            assert_eq!(state.channel, FangyuanAtlasGalleryChannel::Normal);
+            assert!(state.selected_preset_id.is_some());
+            state.clone()
+        };
+        app.world_mut().write_message(dispatch(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_SET_CHANNEL,
+            HOME_GALLERY_CHANNEL_SOURCES[2].0,
+            BTreeMap::from([(
+                "channel".to_owned(),
+                UiActionValue::Enum("forged".to_owned()),
+            )]),
+        ));
+        app.world_mut().write_message(dispatch(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_NEXT_SURFACE,
+            "fangyuan_home.gallery.forged",
+            BTreeMap::new(),
+        ));
+        app.update();
+        assert_eq!(*app.world().resource::<FangyuanAtlasGalleryState>(), before);
     }
 
     #[test]
@@ -4687,6 +5022,7 @@ mod tests {
     fn action_test_app() -> App {
         let mut app = App::new();
         app.init_resource::<FangyuanDebugPanelState>()
+            .init_resource::<FangyuanAtlasGalleryState>()
             .init_resource::<super::super::robot_sync_scene::RobotSyncHudVisibility>()
             .init_resource::<MainWorldEntryState>()
             .init_resource::<UiFocusState>()

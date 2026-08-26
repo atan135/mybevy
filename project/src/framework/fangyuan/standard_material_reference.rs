@@ -10,10 +10,11 @@ use std::collections::HashMap;
 use super::{
     FANGYUAN_NORMAL_SAMPLING_POLICY, FANGYUAN_STANDARD_MATERIAL_REFERENCE_CAPABILITIES,
     FangyuanAtlasAssetCache, FangyuanAtlasFallbackFlags, FangyuanAtlasImageState,
-    FangyuanCatalogAssetPaths, FangyuanCatalogRenderModel, FangyuanMaterialInstanceParams,
-    FangyuanMaterialProfileRegistry, FangyuanPrimitive, FangyuanPrimitiveKind,
-    FangyuanSurfacePresetFallbackReason, FangyuanSurfacePresetRegistry,
-    fangyuan_atlas_tile_content_uv_rect, fangyuan_standard_material_from_params,
+    FangyuanCatalogAssetPaths, FangyuanCatalogOrientation, FangyuanCatalogRenderModel,
+    FangyuanMaterialInstanceParams, FangyuanMaterialProfileRegistry, FangyuanPrimitive,
+    FangyuanPrimitiveKind, FangyuanSurfacePresetFallbackReason, FangyuanSurfacePresetRegistry,
+    fangyuan_atlas_tile_content_uv_rect, fangyuan_resolve_surface_projection,
+    fangyuan_special_surface_fallback, fangyuan_standard_material_from_params,
     fangyuan_unit_cube_mesh,
 };
 
@@ -42,6 +43,13 @@ pub struct FangyuanStandardMaterialReferenceDiagnostic {
     pub resolved_preset_id: String,
     pub fallback_reason: Option<FangyuanSurfacePresetFallbackReason>,
     pub surface_tile_index: u16,
+    pub surface_tile_id: String,
+    pub projection: super::FangyuanCatalogProjection,
+    pub projection_requested: super::FangyuanCatalogProjection,
+    pub projection_fallback_reason: Option<String>,
+    pub orientation_policy: FangyuanCatalogOrientation,
+    pub render_model: FangyuanCatalogRenderModel,
+    pub render_model_fallback: Option<String>,
     pub perceptual_roughness: f32,
     pub metallic: f32,
     pub ambient_occlusion: f32,
@@ -79,10 +87,17 @@ impl FangyuanStandardMaterialReferenceDiagnostic {
                 .collect::<Vec<_>>()
                 .join(",")
         };
+        let projection_fallback = self.projection_fallback_reason.as_deref().unwrap_or("none");
+        let render_fallback = self.render_model_fallback.as_deref().unwrap_or("none");
         format!(
-            "surface requested={requested} resolved={} tile={} roughness={:.3} metallic={:.3} ao={:.3} reflectance={:.3} fallback={fallback} base=bound:{}/ready:{} normal=bound:{}/ready:{} flip_y={} unsupported={unsupported}",
+            "surface requested={requested} resolved={} tile={}#{} projection={:?}->{:?} projection_fallback={projection_fallback} orientation={:?} render={:?} render_fallback={render_fallback} roughness={:.3} metallic={:.3} ao={:.3} reflectance={:.3} fallback={fallback} base=bound:{}/ready:{} normal=bound:{}/ready:{} flip_y={} unsupported={unsupported}",
             self.resolved_preset_id,
+            self.surface_tile_id,
             self.surface_tile_index,
+            self.projection_requested,
+            self.projection,
+            self.orientation_policy,
+            self.render_model,
             self.perceptual_roughness,
             self.metallic,
             self.ambient_occlusion,
@@ -136,6 +151,21 @@ pub fn fangyuan_standard_material_reference(
         None,
     );
     let composed_params = material_registry.compose_primitive(primitive);
+    let projection =
+        fangyuan_resolve_surface_projection(primitive.kind(), surface.preset.projection);
+    let metadata = surface_registry
+        .catalog_metadata()
+        .iter()
+        .find(|metadata| metadata.preset_id == surface.resolved_preset_id);
+    // Orientation is an authoring constraint. The runtime never rotates a
+    // primitive to satisfy it; authored-up remains the mesh contract.
+    let orientation_policy = surface.preset.orientation_policy;
+    let render_model_fallback = fangyuan_special_surface_fallback(
+        surface.preset.render_model,
+        metadata
+            .map(|metadata| metadata.material_family.as_str())
+            .unwrap_or(""),
+    );
     let base_color_atlas_bound = atlas.base_color().is_some();
     let base_color_atlas_ready = matches!(
         atlas.status().state(super::FangyuanAtlasChannel::BaseColor),
@@ -183,12 +213,27 @@ pub fn fangyuan_standard_material_reference(
         .flatten();
     material.flip_normal_map_y = normal_atlas_bound && normal_flip_y;
     material.occlusion_texture = None;
+    if matches!(
+        render_model_fallback,
+        Some(super::FangyuanSpecialSurfaceFallback::UnlitDefault)
+    ) {
+        material.unlit = true;
+    }
 
     let diagnostic = FangyuanStandardMaterialReferenceDiagnostic {
         requested_preset_id: surface.requested_preset_id,
         resolved_preset_id: surface.resolved_preset_id,
         fallback_reason: surface.fallback_reason,
         surface_tile_index: surface.preset.surface_tile_index,
+        surface_tile_id: surface.preset.surface_tile_id.clone(),
+        projection: projection.effective,
+        projection_requested: projection.requested,
+        projection_fallback_reason: projection
+            .fallback_reason
+            .map(|reason| reason.as_str().to_string()),
+        orientation_policy,
+        render_model: surface.preset.render_model,
+        render_model_fallback: render_model_fallback.map(|fallback| fallback.as_str().to_string()),
         perceptual_roughness: surface.preset.roughness,
         metallic: surface.preset.metallic,
         ambient_occlusion: surface.preset.ambient_occlusion,
@@ -526,6 +571,70 @@ mod tests {
         let line = unknown.diagnostic.format_line();
         assert!(line.contains("requested=material:surface/x99/y99"));
         assert!(line.contains("fallback=unknown_preset_id"));
+    }
+
+    #[test]
+    fn special_water_and_sky_presets_report_bounded_reference_fallbacks() {
+        let registry = load_first_package_fangyuan_surface_preset_registry().unwrap();
+        let material_registry = FangyuanMaterialProfileRegistry::default();
+        let (_app, atlas) = loaded_atlas_cache();
+        let water_id = registry
+            .preset_ids()
+            .iter()
+            .find(|id| {
+                registry.get(id).is_some_and(|preset| {
+                    preset.render_model == FangyuanCatalogRenderModel::SpecialWater
+                })
+            })
+            .expect("fixture contains a water preset");
+        let water = fangyuan_standard_material_reference(
+            &primitive(
+                FangyuanPrimitiveKind::Cube,
+                Color::WHITE,
+                1.0,
+                0.0,
+                None,
+                Some(water_id),
+                false,
+            ),
+            &registry,
+            &material_registry,
+            &atlas,
+        );
+        assert_eq!(
+            water.diagnostic.render_model_fallback.as_deref(),
+            Some("standard_opaque")
+        );
+        assert_eq!(water.material.alpha_mode, AlphaMode::Opaque);
+
+        let sky_id = registry
+            .preset_ids()
+            .iter()
+            .find(|id| {
+                registry.get(id).is_some_and(|preset| {
+                    preset.render_model == FangyuanCatalogRenderModel::SpecialUnlitSky
+                })
+            })
+            .expect("fixture contains a sky preset");
+        let sky = fangyuan_standard_material_reference(
+            &primitive(
+                FangyuanPrimitiveKind::Cube,
+                Color::WHITE,
+                1.0,
+                0.0,
+                None,
+                Some(sky_id),
+                false,
+            ),
+            &registry,
+            &material_registry,
+            &atlas,
+        );
+        assert_eq!(
+            sky.diagnostic.render_model_fallback.as_deref(),
+            Some("unlit_default")
+        );
+        assert!(sky.material.unlit);
     }
 
     #[test]

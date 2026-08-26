@@ -73,6 +73,39 @@
                 { "type": "button", "id": "fangyuan_home.module.trial", "variant": "secondary", "label": { "i18n_key": "fangyuan_home.debug.trial", "fallback": "Trial" }, "on_click": { "action": "fangyuan_home.toggle_debug_module", "params": { "module": { "kind": "enum", "value": "trial" } } } }
               ]
             },
+            {
+              "type": "container",
+              "id": "fangyuan_home.gallery_surface_controls",
+              "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 }, "flex_shrink": 0.0 },
+              "children": [
+                { "type": "button", "id": "fangyuan_home.gallery_prev_surface", "variant": "secondary", "label": { "literal": "Surface -" }, "on_click": { "action": "fangyuan_home.gallery_prev_surface" } },
+                { "type": "button", "id": "fangyuan_home.gallery_next_surface", "variant": "secondary", "label": { "literal": "Surface +" }, "on_click": { "action": "fangyuan_home.gallery_next_surface" } },
+                { "type": "button", "id": "fangyuan_home.gallery_prev_noise", "variant": "secondary", "label": { "literal": "Noise -" }, "on_click": { "action": "fangyuan_home.gallery_prev_noise" } },
+                { "type": "button", "id": "fangyuan_home.gallery_next_noise", "variant": "secondary", "label": { "literal": "Noise +" }, "on_click": { "action": "fangyuan_home.gallery_next_noise" } },
+                { "type": "button", "id": "fangyuan_home.gallery_prev_reserved", "variant": "secondary", "label": { "literal": "Reserved -" }, "on_click": { "action": "fangyuan_home.gallery_prev_reserved" } },
+                { "type": "button", "id": "fangyuan_home.gallery_next_reserved", "variant": "secondary", "label": { "literal": "Reserved +" }, "on_click": { "action": "fangyuan_home.gallery_next_reserved" } }
+              ]
+            },
+            {
+              "type": "container",
+              "id": "fangyuan_home.gallery_channel_controls",
+              "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 }, "flex_shrink": 0.0 },
+              "children": [
+                { "type": "button", "id": "fangyuan_home.channel_final", "variant": "secondary", "label": { "literal": "Final" }, "on_click": { "action": "fangyuan_home.gallery_set_channel", "params": { "channel": { "kind": "enum", "value": "final" } } } },
+                { "type": "button", "id": "fangyuan_home.channel_base", "variant": "secondary", "label": { "literal": "Base" }, "on_click": { "action": "fangyuan_home.gallery_set_channel", "params": { "channel": { "kind": "enum", "value": "base" } } } },
+                { "type": "button", "id": "fangyuan_home.channel_normal", "variant": "secondary", "label": { "literal": "Normal" }, "on_click": { "action": "fangyuan_home.gallery_set_channel", "params": { "channel": { "kind": "enum", "value": "normal" } } } },
+                { "type": "button", "id": "fangyuan_home.channel_noise", "variant": "secondary", "label": { "literal": "Noise" }, "on_click": { "action": "fangyuan_home.gallery_set_channel", "params": { "channel": { "kind": "enum", "value": "noise" } } } }
+              ]
+            },
+            {
+              "type": "container",
+              "id": "fangyuan_home.gallery_preset_controls",
+              "layout": { "direction": "row", "wrap": "wrap", "gap": { "px": 6.0 }, "flex_shrink": 0.0 },
+              "children": [
+                { "type": "button", "id": "fangyuan_home.gallery_prev_preset", "variant": "secondary", "label": { "literal": "Preset -" }, "on_click": { "action": "fangyuan_home.gallery_prev_preset" } },
+                { "type": "button", "id": "fangyuan_home.gallery_next_preset", "variant": "secondary", "label": { "literal": "Preset +" }, "on_click": { "action": "fangyuan_home.gallery_next_preset" } }
+              ]
+            },
             { "type": "text", "id": "fangyuan_home.debug.text", "content": { "binding_path": "fangyuan_home.debug.text", "fallback": "fangyuan debug pending" }, "style": { "text_role": "caption" }, "layout": { "width": { "percent": 100.0 }, "flex_shrink": 0.0 } }
           ]
         }

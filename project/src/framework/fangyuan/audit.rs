@@ -5,6 +5,7 @@ use super::{
     FANGYUAN_PRIMITIVE_MAX_EMISSIVE, FangyuanMaterialProfileRegistry, FangyuanPrimitive,
     FangyuanPrimitiveKind, FangyuanPrimitiveRoleDistribution, FangyuanPrimitiveSet,
     FangyuanSurfacePresetFallbackReason, FangyuanSurfacePresetRegistry,
+    fangyuan_resolve_surface_projection,
 };
 
 /// Unified Fangyuan audit report shared by later blueprint, prefab, layout, and
@@ -626,9 +627,22 @@ pub fn audit_fangyuan_surface_usage(
             finding.source_path = source_path.clone();
             finding.surface_material_preset_id = Some(requested_id.to_string());
             finding.surface_resolved_preset_id = Some(resolution.resolved_preset_id.clone());
+            finding.surface_fallback_reason = Some(match resolution.preset.render_model {
+                super::FangyuanCatalogRenderModel::SpecialWater => {
+                    "water_standard_surface".to_string()
+                }
+                super::FangyuanCatalogRenderModel::SpecialUnlitSky => {
+                    "sky_unlit_default".to_string()
+                }
+                _ => "special_render_model".to_string(),
+            });
             report.add_finding(finding);
         }
-        if resolution.preset.projection != resolution.preset.projection_hint {
+        let projection =
+            fangyuan_resolve_surface_projection(primitive.kind(), resolution.preset.projection);
+        if projection.used_fallback()
+            || resolution.preset.projection != resolution.preset.projection_hint
+        {
             let mut finding = FangyuanAuditFinding::new(
                 FangyuanAuditSeverity::Warning,
                 "surface_projection_fallback",
@@ -642,6 +656,12 @@ pub fn audit_fangyuan_surface_usage(
             finding.source_path = source_path.clone();
             finding.surface_material_preset_id = Some(requested_id.to_string());
             finding.surface_resolved_preset_id = Some(resolution.resolved_preset_id.clone());
+            finding.surface_fallback_reason = Some(
+                projection
+                    .fallback_reason
+                    .map(|reason| reason.as_str().to_string())
+                    .unwrap_or_else(|| "projection_hint_mismatch".to_string()),
+            );
             report.add_finding(finding);
         }
     }

@@ -9,11 +9,16 @@ use crate::framework::fangyuan::{
 };
 use crate::framework::{
     fangyuan::{
-        FangyuanAoiDebugMetrics, FangyuanAuditDebugMetrics, FangyuanBakeDebugMetrics,
-        FangyuanCacheDebugMetrics, FangyuanChunkDebugSummary, FangyuanChunkRuntime,
-        FangyuanDebugMetricModule, FangyuanDebugMetricsSnapshot, FangyuanDebugModuleStatus,
-        FangyuanDebugPanelState, FangyuanLodDebugMetrics, FangyuanPressureDebugMetrics,
-        FangyuanPrimitiveDebugMetrics, FangyuanRenderDebugMetrics, fangyuan_debug_panel_snapshot,
+        FangyuanAoiDebugMetrics, FangyuanAtlasGalleryCatalog, FangyuanAtlasGalleryState,
+        FangyuanAuditDebugMetrics, FangyuanBakeDebugMetrics, FangyuanCacheDebugMetrics,
+        FangyuanChunkDebugSummary, FangyuanChunkRuntime, FangyuanDebugMetricModule,
+        FangyuanDebugMetricsSnapshot, FangyuanDebugModuleStatus, FangyuanDebugPanelState,
+        FangyuanLodDebugMetrics, FangyuanPressureDebugMetrics, FangyuanPrimitiveDebugMetrics,
+        FangyuanPrimitiveKind, FangyuanRenderDebugMetrics,
+        fangyuan_atlas_gallery_noise_tile_indices,
+        fangyuan_atlas_gallery_reserved_noise_tile_indices,
+        fangyuan_atlas_gallery_selection_for_state, fangyuan_atlas_gallery_surface_tile_indices,
+        fangyuan_debug_panel_snapshot,
     },
     scene::prelude::SceneEvent,
     ui::{
@@ -66,6 +71,8 @@ pub(super) fn update_fangyuan_home_debug_panel(
     chunk_runtime: Option<Res<FangyuanChunkRuntime>>,
     viewport: Res<UiViewport>,
     mut debug_panel_state: ResMut<FangyuanDebugPanelState>,
+    gallery_state: Option<Res<FangyuanAtlasGalleryState>>,
+    gallery_catalog: Option<Res<FangyuanAtlasGalleryCatalog>>,
     contract: Res<GameplayHudHostContract>,
     mut values: ResMut<UiBindingValues>,
 ) {
@@ -91,8 +98,17 @@ pub(super) fn update_fangyuan_home_debug_panel(
         .as_deref()
         .map(FangyuanChunkRuntime::debug_summary)
         .unwrap_or_default();
-    let panel_text =
-        fangyuan_home_debug_panel_text(Some(&stats), Some(&chunk_summary), &debug_panel_state);
+    let default_gallery_state = FangyuanAtlasGalleryState::default();
+    let gallery_state = gallery_state.as_deref().unwrap_or(&default_gallery_state);
+    let panel_text = fangyuan_home_debug_panel_text(
+        Some(&stats),
+        Some(&chunk_summary),
+        &debug_panel_state,
+        gallery_state,
+        gallery_catalog
+            .as_deref()
+            .and_then(FangyuanAtlasGalleryCatalog::registry),
+    );
     set_binding(
         &contract,
         &mut values,
@@ -141,13 +157,50 @@ fn fangyuan_home_debug_panel_text(
     stats: Option<&FangyuanHomeBlueprintStats>,
     chunk_summary: Option<&FangyuanChunkDebugSummary>,
     state: &FangyuanDebugPanelState,
+    gallery: &FangyuanAtlasGalleryState,
+    gallery_registry: Option<&crate::framework::fangyuan::FangyuanSurfacePresetRegistry>,
 ) -> String {
     let default_stats = FangyuanHomeBlueprintStats::default();
     let default_chunk_summary = FangyuanChunkDebugSummary::default();
     let stats = stats.unwrap_or(&default_stats);
     let chunk_summary = chunk_summary.unwrap_or(&default_chunk_summary);
     let snapshot = fangyuan_home_debug_metrics_snapshot(stats, chunk_summary);
-    fangyuan_debug_panel_snapshot(&snapshot, state.toggles, state.compact).text()
+    let mut text = fangyuan_debug_panel_snapshot(&snapshot, state.toggles, state.compact).text();
+    if state.visible {
+        text.push('\n');
+        text.push_str(&fangyuan_home_atlas_gallery_debug_text(
+            gallery,
+            gallery_registry,
+        ));
+    }
+    text
+}
+
+fn fangyuan_home_atlas_gallery_debug_text(
+    gallery: &FangyuanAtlasGalleryState,
+    gallery_registry: Option<&crate::framework::fangyuan::FangyuanSurfacePresetRegistry>,
+) -> String {
+    let state_line = format!(
+        "atlas gallery surface {}/{} noise {}/{} reserved {} channels base/normal/noise/final current={} selected_surface {} selected_noise {:?} selected_reserved {:?} preset {}",
+        gallery.surface_tile_index.saturating_add(1),
+        fangyuan_atlas_gallery_surface_tile_indices().len(),
+        gallery
+            .noise_tile_index
+            .map_or(0, |index| index.saturating_add(1)),
+        fangyuan_atlas_gallery_noise_tile_indices().len(),
+        fangyuan_atlas_gallery_reserved_noise_tile_indices().len(),
+        gallery.channel.as_str(),
+        gallery.surface_tile_index,
+        gallery.noise_tile_index,
+        gallery.reserved_noise_tile_index,
+        gallery.selected_preset_id.as_deref().unwrap_or("<none>"),
+    );
+    let Some(registry) = gallery_registry else {
+        return format!("{state_line} selection pending (registry unavailable)");
+    };
+    let selection =
+        fangyuan_atlas_gallery_selection_for_state(registry, FangyuanPrimitiveKind::Cube, gallery);
+    format!("{state_line}\n{}", selection.format_line())
 }
 
 fn fangyuan_home_debug_metrics_snapshot(
@@ -605,8 +658,13 @@ mod tests {
             compact: false,
             toggles: FangyuanDebugPanelToggles::default(),
         };
-        let debug_text =
-            fangyuan_home_debug_panel_text(Some(&stats), Some(&chunk_summary), &panel_state);
+        let debug_text = fangyuan_home_debug_panel_text(
+            Some(&stats),
+            Some(&chunk_summary),
+            &panel_state,
+            &FangyuanAtlasGalleryState::default(),
+            None,
+        );
         let hud_text = fangyuan_home_hud_status_text(Some(&stats), Some(&chunk_summary));
 
         assert!(debug_text.contains("fangyuan debug panel"));
@@ -623,8 +681,101 @@ mod tests {
         assert!(debug_text.contains("cache missing hit/miss pending"));
         assert!(debug_text.contains("bake missing artifact none"));
         assert!(debug_text.contains("trial route fangyuan.object_trial"));
+        assert!(debug_text.contains("atlas gallery surface 1/256"));
+        assert!(debug_text.contains("channels base/normal/noise/final"));
         assert!(!hud_text.contains("fangyuan debug panel"));
         assert!(!hud_text.contains("cache missing hit/miss pending"));
+    }
+
+    #[test]
+    fn fangyuan_gallery_debug_text_reports_selection_diagnostics_when_catalog_is_available() {
+        let registry =
+            crate::framework::fangyuan::load_first_package_fangyuan_surface_preset_registry()
+                .expect("first-package surface catalog should load in tests");
+        let mut gallery = FangyuanAtlasGalleryState::default();
+        gallery.visible = true;
+        let text = fangyuan_home_debug_panel_text(
+            None,
+            None,
+            &FangyuanDebugPanelState {
+                visible: true,
+                ..Default::default()
+            },
+            &gallery,
+            Some(&registry),
+        );
+
+        assert!(text.contains("gallery channel="));
+        assert!(text.contains("surface="));
+        assert!(text.contains("uv="));
+        assert!(text.contains("projection="));
+        assert!(text.contains("render="));
+        assert!(text.contains("pbr="));
+        assert!(text.contains("fallback="));
+    }
+
+    #[test]
+    fn fangyuan_gallery_debug_text_tracks_cycled_surface_and_noise_cells() {
+        let registry =
+            crate::framework::fangyuan::load_first_package_fangyuan_surface_preset_registry()
+                .expect("first-package surface catalog should load in tests");
+        let mut gallery = FangyuanAtlasGalleryState::default();
+        gallery.cycle_surface_tile(1);
+        gallery.cycle_noise_tile(1);
+        let text = fangyuan_home_debug_panel_text(
+            None,
+            None,
+            &FangyuanDebugPanelState {
+                visible: true,
+                ..Default::default()
+            },
+            &gallery,
+            Some(&registry),
+        );
+
+        assert!(text.contains("selected_surface 1"));
+        assert!(text.contains("surface=surface_x01_y00#1"));
+        assert!(text.contains("noise_selection=none"));
+    }
+
+    #[test]
+    fn fangyuan_gallery_debug_text_marks_reserved_noise_as_rejected_without_uv() {
+        let registry =
+            crate::framework::fangyuan::load_first_package_fangyuan_surface_preset_registry()
+                .expect("first-package surface catalog should load in tests");
+        let mut gallery = FangyuanAtlasGalleryState::default();
+        assert!(gallery.select_reserved_noise_tile(255));
+        let text = fangyuan_home_debug_panel_text(
+            None,
+            None,
+            &FangyuanDebugPanelState {
+                visible: true,
+                ..Default::default()
+            },
+            &gallery,
+            Some(&registry),
+        );
+
+        assert!(text.contains("noise=noise_x15_y15#None"));
+        assert!(text.contains("noise_uv=None"));
+        assert!(text.contains("noise_selection=reserved_noise_tile_rejected"));
+    }
+
+    #[test]
+    fn fangyuan_gallery_debug_text_reports_pending_selection_without_catalog() {
+        let text = fangyuan_home_debug_panel_text(
+            None,
+            None,
+            &FangyuanDebugPanelState {
+                visible: true,
+                ..Default::default()
+            },
+            &FangyuanAtlasGalleryState::default(),
+            None,
+        );
+
+        assert!(text.contains("atlas gallery surface 1/256"));
+        assert!(text.contains("selection pending (registry unavailable)"));
     }
 
     #[test]

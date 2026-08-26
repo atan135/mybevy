@@ -76,6 +76,7 @@ pub struct ResolvedFangyuanSurfacePreset {
     pub repeat_size_m: [f32; 2],
     pub projection: FangyuanCatalogProjection,
     pub projection_hint: FangyuanCatalogProjection,
+    pub orientation_policy: super::FangyuanCatalogOrientation,
     pub render_model: FangyuanCatalogRenderModel,
     pub flags: FangyuanSurfacePresetFlags,
 }
@@ -101,6 +102,7 @@ impl ResolvedFangyuanSurfacePreset {
             repeat_size_m: [1.0, 1.0],
             projection: FangyuanCatalogProjection::Planar,
             projection_hint: FangyuanCatalogProjection::Planar,
+            orientation_policy: super::FangyuanCatalogOrientation::PreserveAuthoredUp,
             render_model: FangyuanCatalogRenderModel::StandardPbr,
             flags: FangyuanSurfacePresetFlags {
                 opaque: true,
@@ -468,6 +470,7 @@ impl FangyuanSurfacePresetRegistry {
                     repeat_size_m: preset.uv.reference_repeat_size_m,
                     projection: preset.uv.projection,
                     projection_hint: preset.uv.projection,
+                    orientation_policy: preset.uv.orientation_policy,
                     render_model: preset.render_model,
                     flags,
                 };

@@ -10,6 +10,15 @@
       { "id": "fangyuan_home.switch_trial_budget", "sources": ["fangyuan_home.switch_trial_budget"] },
       { "id": "fangyuan_home.toggle_debug", "sources": ["fangyuan_home.toggle_debug"] },
       { "id": "fangyuan_home.toggle_debug_module", "sources": ["fangyuan_home.module.render", "fangyuan_home.module.lod", "fangyuan_home.module.cache", "fangyuan_home.module.bake", "fangyuan_home.module.audit", "fangyuan_home.module.trial"] },
+      { "id": "fangyuan_home.gallery_prev_surface", "sources": ["fangyuan_home.gallery_prev_surface"] },
+      { "id": "fangyuan_home.gallery_next_surface", "sources": ["fangyuan_home.gallery_next_surface"] },
+      { "id": "fangyuan_home.gallery_prev_noise", "sources": ["fangyuan_home.gallery_prev_noise"] },
+      { "id": "fangyuan_home.gallery_next_noise", "sources": ["fangyuan_home.gallery_next_noise"] },
+      { "id": "fangyuan_home.gallery_prev_reserved", "sources": ["fangyuan_home.gallery_prev_reserved"] },
+      { "id": "fangyuan_home.gallery_next_reserved", "sources": ["fangyuan_home.gallery_next_reserved"] },
+      { "id": "fangyuan_home.gallery_set_channel", "sources": ["fangyuan_home.channel_final", "fangyuan_home.channel_base", "fangyuan_home.channel_normal", "fangyuan_home.channel_noise"] },
+      { "id": "fangyuan_home.gallery_prev_preset", "sources": ["fangyuan_home.gallery_prev_preset"] },
+      { "id": "fangyuan_home.gallery_next_preset", "sources": ["fangyuan_home.gallery_next_preset"] },
       { "id": "fangyuan_home.return_lobby", "sources": ["fangyuan_home.return_lobby"] }
     ],
     "bindings": [
