@@ -24,7 +24,7 @@ use super::{
     FangyuanCatalogProjection, FangyuanCatalogRenderModel, FangyuanPrimitiveBlueprint,
     FangyuanPrimitiveKind, FangyuanPrimitiveRole, FangyuanSurfacePresetCacheIdentity,
     FangyuanSurfacePresetCatalogMetadata, FangyuanSurfacePresetRegistry,
-    audit_fangyuan_surface_usage,
+    audit_fangyuan_surface_usage, validate_fangyuan_blueprint_asset_path,
 };
 
 pub const FANGYUAN_AUTHORING_TASK_SCHEMA_VERSION: &str = "fangyuan-generation-task/v1";
@@ -41,6 +41,8 @@ pub const FANGYUAN_AUTHORING_AUDIT_REPORT_SCHEMA_VERSION: &str =
     "fangyuan-generation-audit-report/v1";
 pub const FANGYUAN_AUTHORING_PROMOTION_DECISION_SCHEMA_VERSION: &str =
     "fangyuan-generation-promotion-decision/v1";
+pub const FANGYUAN_AUTHORING_PROMOTION_REPORT_SCHEMA_VERSION: &str =
+    "fangyuan-generation-promotion-report/v1";
 pub const FANGYUAN_AUTHORING_RUN_DIRECTORY: &str = "summary/fangyuan-generation";
 pub const FANGYUAN_AUTHORING_MAX_TASK_BYTES: usize = 64 * 1024;
 
@@ -53,6 +55,7 @@ const DRAFT_BLUEPRINT_FILE: &str = "draft/blueprint.ron";
 const CANONICAL_BLUEPRINT_FILE: &str = "canonical/blueprint.ron";
 const AUDIT_REPORT_FILE: &str = "audit/report.json";
 const PROMOTION_DECISION_FILE: &str = "promotion/decision.json";
+const PROMOTION_REPORT_FILE: &str = "promotion/report.json";
 const LOG_SUMMARY_FILE: &str = "logs/summary.json";
 const CATALOG_CONTEXT_FILE: &str = "input/catalog-context.json";
 const CODEX_TASK_FILE: &str = "input/codex-task.md";
@@ -371,10 +374,19 @@ pub struct FangyuanAuthoringCliOptions {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FangyuanAuthoringCommand {
-    PrepareTask { task: PathBuf },
-    ValidateDraft { run_id: String },
-    Promote { run_id: String },
-    InspectRun { run_id: String },
+    PrepareTask {
+        task: PathBuf,
+    },
+    ValidateDraft {
+        run_id: String,
+    },
+    Promote {
+        run_id: String,
+        expected_old_sha256: Option<String>,
+    },
+    InspectRun {
+        run_id: String,
+    },
 }
 
 impl FangyuanAuthoringCliOptions {
@@ -404,9 +416,7 @@ impl FangyuanAuthoringCliOptions {
             "validate-draft" => FangyuanAuthoringCommand::ValidateDraft {
                 run_id: parse_exact_option(rest, "--run")?,
             },
-            "promote" => FangyuanAuthoringCommand::Promote {
-                run_id: parse_exact_option(rest, "--run")?,
-            },
+            "promote" => parse_promote_command(rest)?,
             "inspect-run" => FangyuanAuthoringCommand::InspectRun {
                 run_id: parse_exact_option(rest, "--run")?,
             },
@@ -427,7 +437,7 @@ pub fn fangyuan_authoring_cli_usage() -> String {
         "subcommands:",
         "  prepare-task --task <repository-relative-task.json>",
         "  validate-draft --run <run-id>",
-        "  promote --run <run-id>",
+        "  promote --run <run-id> [--expected-old-sha256 <64-lowercase-hex>]",
         "  inspect-run --run <run-id>",
     ]
     .join("\n")
@@ -539,6 +549,7 @@ impl FangyuanAuthoringCommandName {
 pub enum FangyuanAuthoringCommandStatus {
     Prepared,
     Validated,
+    Promoted,
     Inspected,
 }
 
@@ -547,6 +558,7 @@ impl FangyuanAuthoringCommandStatus {
         match self {
             Self::Prepared => "prepared",
             Self::Validated => "validated",
+            Self::Promoted => "promoted",
             Self::Inspected => "inspected",
         }
     }
@@ -573,9 +585,10 @@ pub fn run_fangyuan_authoring_cli(
         FangyuanAuthoringCommand::ValidateDraft { run_id } => {
             validate_draft(&repository_root, run_id)
         }
-        FangyuanAuthoringCommand::Promote { run_id } => {
-            promote_placeholder(&repository_root, run_id)
-        }
+        FangyuanAuthoringCommand::Promote {
+            run_id,
+            expected_old_sha256,
+        } => promote(&repository_root, run_id, expected_old_sha256.as_deref()),
         FangyuanAuthoringCommand::InspectRun { run_id } => inspect_run(&repository_root, run_id),
     }
 }
@@ -835,23 +848,134 @@ fn validate_draft(
     ))
 }
 
-fn promote_placeholder(
+fn promote(
     repository_root: &Path,
     run_id: &str,
+    expected_old_sha256: Option<&str>,
 ) -> Result<FangyuanAuthoringCliReport, FangyuanAuthoringCliError> {
     let (run_directory, mut manifest) = open_run(repository_root, run_id)?;
+    let mut report = FangyuanAuthoringPromotionReport::new(run_id, expected_old_sha256);
+    let result = (|| {
+        let inputs = load_draft_validation_inputs(repository_root, &run_directory)
+            .map_err(|_| promotion_operation_failed(run_id, "promotion_inputs_invalid"))?;
+        report.source_task_sha256 = Some(inputs.prepared.source_task_sha256.clone());
+        report.prepared_task_sha256 = Some(inputs.prepared_task_sha256.clone());
+        report.catalog_context_sha256 = Some(inputs.catalog_context_sha256.clone());
+        report.target_relative_path = generated_blueprint_target(&inputs.prepared.task.stable_id);
+
+        let canonical_bytes = read_safe_run_file(&run_directory, CANONICAL_BLUEPRINT_FILE)
+            .map_err(|_| promotion_operation_failed(run_id, "canonical_missing_or_unsafe"))?;
+        let canonical_sha256 = sha256_hex(&canonical_bytes);
+        report.canonical_sha256 = Some(canonical_sha256.clone());
+        let canonical_source = std::str::from_utf8(&canonical_bytes)
+            .map_err(|_| promotion_operation_failed(run_id, "canonical_not_utf8"))?;
+        let canonical = FangyuanBlueprint::from_ron_str(canonical_source)
+            .map_err(|_| promotion_operation_failed(run_id, "canonical_invalid"))?;
+        let canonicalized = canonical_blueprint_ron_bytes(&canonical)
+            .map_err(|_| promotion_operation_failed(run_id, "canonical_invalid"))?;
+        if canonicalized != canonical_bytes {
+            return Err(promotion_operation_failed(
+                run_id,
+                "canonical_not_normalized",
+            ));
+        }
+
+        let audit_bytes = read_safe_run_file(&run_directory, AUDIT_REPORT_FILE)
+            .map_err(|_| promotion_operation_failed(run_id, "audit_missing_or_unsafe"))?;
+        let audit_sha256 = sha256_hex(&audit_bytes);
+        report.audit_sha256 = Some(audit_sha256.clone());
+        let audit = serde_json::from_slice::<FangyuanAuthoringAuditArtifact>(&audit_bytes)
+            .map_err(|_| promotion_operation_failed(run_id, "audit_invalid"))?;
+        if audit.schema_version != FANGYUAN_AUTHORING_AUDIT_REPORT_SCHEMA_VERSION
+            || audit.prepared_task_sha256 != inputs.prepared_task_sha256
+            || audit.catalog_context_sha256 != inputs.catalog_context_sha256
+            || audit.canonical_sha256.as_deref() != Some(canonical_sha256.as_str())
+            || audit.warning_policy != FANGYUAN_AUTHORING_WARNING_POLICY
+            || audit.report.error_count != 0
+            || !matches!(
+                audit.report.status,
+                FangyuanAuthoringAuditSnapshotStatus::Passed
+                    | FangyuanAuthoringAuditSnapshotStatus::PassedWithWarnings
+            )
+        {
+            return Err(promotion_operation_failed(run_id, "audit_not_approved"));
+        }
+
+        let decision_bytes = read_safe_run_file(&run_directory, PROMOTION_DECISION_FILE)
+            .map_err(|_| promotion_operation_failed(run_id, "decision_missing_or_unsafe"))?;
+        let decision_sha256 = sha256_hex(&decision_bytes);
+        report.decision_sha256 = Some(decision_sha256);
+        let decision =
+            serde_json::from_slice::<FangyuanAuthoringPromotionDecision>(&decision_bytes)
+                .map_err(|_| promotion_operation_failed(run_id, "decision_invalid"))?;
+        if decision.schema_version != FANGYUAN_AUTHORING_PROMOTION_DECISION_SCHEMA_VERSION
+            || decision.status != FangyuanAuthoringPromotionDecisionStatus::ReadyForPromotion
+            || decision.canonical_sha256.as_deref() != Some(canonical_sha256.as_str())
+            || decision.catalog_context_sha256 != inputs.catalog_context_sha256
+            || decision.audit_sha256 != audit_sha256
+            || decision.target_relative_path != report.target_relative_path
+            || decision.expected_target_sha256.is_some()
+            || decision.warning_policy != FANGYUAN_AUTHORING_WARNING_POLICY
+        {
+            return Err(promotion_operation_failed(run_id, "decision_not_ready"));
+        }
+
+        let target = generated_blueprint_target_path(
+            repository_root,
+            &inputs.prepared.task.stable_id,
+            &report.target_relative_path,
+        )
+        .map_err(|_| promotion_operation_failed(run_id, "target_invalid"))?;
+        let existing = read_safe_generated_target(&target, repository_root)
+            .map_err(|_| promotion_operation_failed(run_id, "target_unsafe"))?;
+        report.old_target_sha256 = existing.as_ref().map(|bytes| sha256_hex(bytes));
+
+        if let Some(existing) = existing {
+            if existing == canonical_bytes {
+                report.new_target_sha256 = Some(canonical_sha256);
+                return Ok(FangyuanAuthoringPromotionResult::AlreadyCurrent);
+            }
+            if expected_old_sha256 != report.old_target_sha256.as_deref() {
+                return Err(promotion_operation_failed(run_id, "target_conflict"));
+            }
+        }
+
+        atomic_write_generated_target(&target, &canonical_bytes)
+            .map_err(|_| promotion_operation_failed(run_id, "target_write_failed"))?;
+        report.new_target_sha256 = Some(canonical_sha256);
+        Ok(FangyuanAuthoringPromotionResult::Promoted)
+    })();
+
+    match &result {
+        Ok(outcome) => report.result = *outcome,
+        Err(FangyuanAuthoringCliError::OperationFailed { code, .. }) => {
+            report.failure_code = Some((*code).to_string());
+        }
+        Err(_) => report.failure_code = Some("promotion_failed".to_string()),
+    }
+    write_or_replace_run_file(
+        &run_directory,
+        PROMOTION_REPORT_FILE,
+        &canonical_json_bytes(&report)?,
+    )?;
     append_run_log_event(
         &run_directory,
         run_id,
         "promote",
-        "promote_not_implemented",
-        None,
+        match report.result {
+            FangyuanAuthoringPromotionResult::Promoted => "promoted",
+            FangyuanAuthoringPromotionResult::AlreadyCurrent => "promotion_idempotent",
+            FangyuanAuthoringPromotionResult::Rejected => "promotion_rejected",
+        },
+        report.canonical_sha256.clone(),
     )?;
     refresh_run_manifest(&run_directory, &mut manifest)?;
-    Err(FangyuanAuthoringCliError::OperationFailed {
-        run_id: run_id.to_string(),
-        code: "promote_not_implemented",
-    })
+    result?;
+    Ok(report_from_manifest(
+        FangyuanAuthoringCommandName::Promote,
+        FangyuanAuthoringCommandStatus::Promoted,
+        &manifest,
+    ))
 }
 
 fn inspect_run(
@@ -865,6 +989,212 @@ fn inspect_run(
         FangyuanAuthoringCommandStatus::Inspected,
         &manifest,
     ))
+}
+
+fn promotion_operation_failed(run_id: &str, code: &'static str) -> FangyuanAuthoringCliError {
+    FangyuanAuthoringCliError::OperationFailed {
+        run_id: run_id.to_string(),
+        code,
+    }
+}
+
+fn generated_blueprint_target_path(
+    repository_root: &Path,
+    stable_id: &str,
+    target_relative_path: &str,
+) -> Result<PathBuf, FangyuanAuthoringCliError> {
+    let expected_target = generated_blueprint_target(stable_id);
+    if target_relative_path != expected_target {
+        return Err(FangyuanAuthoringCliError::Boundary(
+            "promotion target must match the fixed generated blueprint path",
+        ));
+    }
+    let asset_relative_path = target_relative_path.strip_prefix("project/assets/").ok_or(
+        FangyuanAuthoringCliError::Boundary(
+            "promotion target must be inside the first-package assets directory",
+        ),
+    )?;
+    validate_fangyuan_blueprint_asset_path(asset_relative_path).map_err(|_| {
+        FangyuanAuthoringCliError::Boundary("promotion target is not a valid Fangyuan asset path")
+    })?;
+
+    let asset_root = repository_root.join("project/assets");
+    let asset_root_metadata =
+        fs::symlink_metadata(&asset_root).map_err(|source| FangyuanAuthoringCliError::Io {
+            operation: "failed to inspect first-package assets directory",
+            source,
+        })?;
+    if asset_root_metadata.file_type().is_symlink() || !asset_root_metadata.is_dir() {
+        return Err(FangyuanAuthoringCliError::Boundary(
+            "first-package assets directory must be a regular directory",
+        ));
+    }
+    let canonical_asset_root =
+        fs::canonicalize(&asset_root).map_err(|source| FangyuanAuthoringCliError::Io {
+            operation: "failed to resolve first-package assets directory",
+            source,
+        })?;
+    if !canonical_asset_root.starts_with(repository_root) {
+        return Err(FangyuanAuthoringCliError::Boundary(
+            "first-package assets directory escapes the repository",
+        ));
+    }
+
+    let mut target_parent = asset_root;
+    for component in ["fangyuan", "blueprints", "generated"] {
+        target_parent.push(component);
+        match fs::symlink_metadata(&target_parent) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(FangyuanAuthoringCliError::Boundary(
+                        "promotion target parent must be a regular directory",
+                    ));
+                }
+            }
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir(&target_parent).map_err(|source| FangyuanAuthoringCliError::Io {
+                    operation: "failed to create promotion target directory",
+                    source,
+                })?;
+            }
+            Err(source) => {
+                return Err(FangyuanAuthoringCliError::Io {
+                    operation: "failed to inspect promotion target directory",
+                    source,
+                });
+            }
+        }
+        let canonical_parent =
+            fs::canonicalize(&target_parent).map_err(|source| FangyuanAuthoringCliError::Io {
+                operation: "failed to resolve promotion target directory",
+                source,
+            })?;
+        if !canonical_parent.starts_with(&canonical_asset_root) {
+            return Err(FangyuanAuthoringCliError::Boundary(
+                "promotion target directory escapes the first-package assets directory",
+            ));
+        }
+    }
+    Ok(target_parent.join(format!("{stable_id}.ron")))
+}
+
+fn read_safe_generated_target(
+    target: &Path,
+    repository_root: &Path,
+) -> Result<Option<Vec<u8>>, FangyuanAuthoringCliError> {
+    match fs::symlink_metadata(target) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(FangyuanAuthoringCliError::Boundary(
+                    "promotion target must be a regular file",
+                ));
+            }
+            let canonical =
+                fs::canonicalize(target).map_err(|source| FangyuanAuthoringCliError::Io {
+                    operation: "failed to resolve promotion target",
+                    source,
+                })?;
+            let asset_root =
+                fs::canonicalize(repository_root.join("project/assets")).map_err(|source| {
+                    FangyuanAuthoringCliError::Io {
+                        operation: "failed to resolve first-package assets directory",
+                        source,
+                    }
+                })?;
+            if !canonical.starts_with(asset_root) {
+                return Err(FangyuanAuthoringCliError::Boundary(
+                    "promotion target escapes the first-package assets directory",
+                ));
+            }
+            fs::read(target)
+                .map(Some)
+                .map_err(|source| FangyuanAuthoringCliError::Io {
+                    operation: "failed to read existing promotion target",
+                    source,
+                })
+        }
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(FangyuanAuthoringCliError::Io {
+            operation: "failed to inspect promotion target",
+            source,
+        }),
+    }
+}
+
+fn atomic_write_generated_target(
+    target: &Path,
+    bytes: &[u8],
+) -> Result<(), FangyuanAuthoringCliError> {
+    let parent = target.parent().ok_or(FangyuanAuthoringCliError::Boundary(
+        "promotion target has no parent directory",
+    ))?;
+    let temporary = parent.join(format!(".fangyuan-promotion-{}.tmp", local_nonce()?));
+    let mut temporary_created = false;
+    let write_result = (|| {
+        use std::io::Write;
+
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|source| FangyuanAuthoringCliError::Io {
+                operation: "failed to create temporary promotion target",
+                source,
+            })?;
+        temporary_created = true;
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| FangyuanAuthoringCliError::Io {
+                operation: "failed to write temporary promotion target",
+                source,
+            })?;
+        replace_generated_target(&temporary, target).map_err(|source| {
+            FangyuanAuthoringCliError::Io {
+                operation: "failed to replace promotion target",
+                source,
+            }
+        })
+    })();
+    if write_result.is_err() && temporary_created {
+        let _ = fs::remove_file(&temporary);
+    }
+    write_result
+}
+
+#[cfg(not(windows))]
+fn replace_generated_target(temporary: &Path, target: &Path) -> io::Result<()> {
+    fs::rename(temporary, target)
+}
+
+#[cfg(windows)]
+fn replace_generated_target(temporary: &Path, target: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    unsafe extern "system" {
+        fn MoveFileExW(
+            existing_file_name: *const u16,
+            new_file_name: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+
+    let temporary_wide: Vec<_> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target_wide: Vec<_> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    // MoveFileExW keeps the destination replacement in the same filesystem operation.
+    if unsafe {
+        MoveFileExW(
+            temporary_wide.as_ptr(),
+            target_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1133,6 +1463,55 @@ enum FangyuanAuthoringPromotionDecisionStatus {
     NotEvaluated,
     Blocked,
     ReadyForPromotion,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FangyuanAuthoringPromotionReport {
+    schema_version: String,
+    run_id: String,
+    source_task_sha256: Option<String>,
+    prepared_task_sha256: Option<String>,
+    catalog_context_sha256: Option<String>,
+    canonical_sha256: Option<String>,
+    audit_sha256: Option<String>,
+    decision_sha256: Option<String>,
+    target_relative_path: String,
+    old_target_sha256: Option<String>,
+    new_target_sha256: Option<String>,
+    expected_old_sha256: Option<String>,
+    result: FangyuanAuthoringPromotionResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_code: Option<String>,
+}
+
+impl FangyuanAuthoringPromotionReport {
+    fn new(run_id: &str, expected_old_sha256: Option<&str>) -> Self {
+        Self {
+            schema_version: FANGYUAN_AUTHORING_PROMOTION_REPORT_SCHEMA_VERSION.to_string(),
+            run_id: run_id.to_string(),
+            source_task_sha256: None,
+            prepared_task_sha256: None,
+            catalog_context_sha256: None,
+            canonical_sha256: None,
+            audit_sha256: None,
+            decision_sha256: None,
+            target_relative_path: String::new(),
+            old_target_sha256: None,
+            new_target_sha256: None,
+            expected_old_sha256: expected_old_sha256.map(str::to_string),
+            result: FangyuanAuthoringPromotionResult::Rejected,
+            failure_code: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FangyuanAuthoringPromotionResult {
+    Promoted,
+    AlreadyCurrent,
+    Rejected,
 }
 
 fn load_catalog_context(
@@ -2857,7 +3236,7 @@ fn ensure_safe_run_parent(
     Ok(())
 }
 
-fn known_run_artifact_paths() -> [&'static str; 9] {
+fn known_run_artifact_paths() -> [&'static str; 10] {
     [
         TASK_SOURCE_FILE,
         TASK_PREPARED_FILE,
@@ -2867,6 +3246,7 @@ fn known_run_artifact_paths() -> [&'static str; 9] {
         CANONICAL_BLUEPRINT_FILE,
         AUDIT_REPORT_FILE,
         PROMOTION_DECISION_FILE,
+        PROMOTION_REPORT_FILE,
         LOG_SUMMARY_FILE,
     ]
 }
@@ -2880,6 +3260,7 @@ fn artifact_schema_version(relative_path: &str) -> &'static str {
         DRAFT_BLUEPRINT_FILE | CANONICAL_BLUEPRINT_FILE => "fangyuan-blueprint-ron/v1",
         AUDIT_REPORT_FILE => "fangyuan-generation-audit-report/v1",
         PROMOTION_DECISION_FILE => "fangyuan-generation-promotion-decision/v1",
+        PROMOTION_REPORT_FILE => FANGYUAN_AUTHORING_PROMOTION_REPORT_SCHEMA_VERSION,
         LOG_SUMMARY_FILE => FANGYUAN_AUTHORING_LOG_SUMMARY_SCHEMA_VERSION,
         _ => "unknown",
     }
@@ -3144,6 +3525,42 @@ fn parse_exact_option(
     Ok(args[1].clone())
 }
 
+fn parse_promote_command(
+    args: &[String],
+) -> Result<FangyuanAuthoringCommand, FangyuanAuthoringCliError> {
+    let (run_id, expected_old_sha256) = match args {
+        [run_flag, run_id] if run_flag == "--run" && !run_id.is_empty() => (run_id.clone(), None),
+        [run_flag, run_id, expected_flag, expected_old_sha256]
+            if run_flag == "--run"
+                && !run_id.is_empty()
+                && expected_flag == "--expected-old-sha256"
+                && is_sha256_hex(expected_old_sha256) =>
+        {
+            (run_id.clone(), Some(expected_old_sha256.clone()))
+        }
+        [unknown, ..] if unknown.starts_with("--") && unknown != "--run" => {
+            return Err(FangyuanAuthoringCliError::InvalidArgs(format!(
+                "unknown argument `{unknown}`"
+            )));
+        }
+        [run_flag, _, unknown, ..] if run_flag == "--run" && unknown.starts_with("--") => {
+            return Err(FangyuanAuthoringCliError::InvalidArgs(format!(
+                "unknown argument `{unknown}`"
+            )));
+        }
+        _ => {
+            return Err(FangyuanAuthoringCliError::InvalidArgs(
+                "promote requires --run <run-id> and optional --expected-old-sha256 <64-lowercase-hex>"
+                    .to_string(),
+            ));
+        }
+    };
+    Ok(FangyuanAuthoringCommand::Promote {
+        run_id,
+        expected_old_sha256,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3234,12 +3651,39 @@ mod tests {
         FangyuanAuthoringCliOptions::parse_from(["validate-draft", "--run", run_id]).unwrap()
     }
 
+    fn promote_options(
+        run_id: &str,
+        expected_old_sha256: Option<&str>,
+    ) -> FangyuanAuthoringCliOptions {
+        let mut args = vec![
+            "promote".to_string(),
+            "--run".to_string(),
+            run_id.to_string(),
+        ];
+        if let Some(expected_old_sha256) = expected_old_sha256 {
+            args.push("--expected-old-sha256".to_string());
+            args.push(expected_old_sha256.to_string());
+        }
+        FangyuanAuthoringCliOptions::parse_from(args).unwrap()
+    }
+
+    fn generated_target(repository: &TempDir) -> PathBuf {
+        repository
+            .path()
+            .join("project/assets/fangyuan/blueprints/generated/stage1_contract_fixture.ron")
+    }
+
     fn read_audit_artifact(run_directory: &Path) -> FangyuanAuthoringAuditArtifact {
         serde_json::from_slice(&fs::read(run_directory.join(AUDIT_REPORT_FILE)).unwrap()).unwrap()
     }
 
     fn read_promotion_decision(run_directory: &Path) -> FangyuanAuthoringPromotionDecision {
         serde_json::from_slice(&fs::read(run_directory.join(PROMOTION_DECISION_FILE)).unwrap())
+            .unwrap()
+    }
+
+    fn read_promotion_report(run_directory: &Path) -> FangyuanAuthoringPromotionReport {
+        serde_json::from_slice(&fs::read(run_directory.join(PROMOTION_REPORT_FILE)).unwrap())
             .unwrap()
     }
 
@@ -3252,6 +3696,16 @@ mod tests {
                 code: "draft_validation_failed",
                 ..
             })
+        ));
+    }
+
+    fn assert_promotion_failed(
+        result: Result<FangyuanAuthoringCliReport, FangyuanAuthoringCliError>,
+        expected_code: &'static str,
+    ) {
+        assert!(matches!(
+            result,
+            Err(FangyuanAuthoringCliError::OperationFailed { code, .. }) if code == expected_code
         ));
     }
 
@@ -3300,6 +3754,33 @@ mod tests {
             )),
             2
         );
+        assert_eq!(
+            FangyuanAuthoringCliOptions::parse_from([
+                "promote",
+                "--run",
+                "fygen-v1-20260826T010203Z-012345abcdef",
+                "--expected-old-sha256",
+                "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+            ])
+            .unwrap()
+            .command,
+            FangyuanAuthoringCommand::Promote {
+                run_id: "fygen-v1-20260826T010203Z-012345abcdef".to_string(),
+                expected_old_sha256: Some(
+                    "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899".to_string(),
+                ),
+            }
+        );
+        assert!(matches!(
+            FangyuanAuthoringCliOptions::parse_from([
+                "promote",
+                "--run",
+                "fygen-v1-20260826T010203Z-012345abcdef",
+                "--expected-old-sha256",
+                "invalid",
+            ]),
+            Err(FangyuanAuthoringCliError::InvalidArgs(_))
+        ));
     }
 
     #[test]
@@ -3528,16 +4009,10 @@ mod tests {
             &validate_options(&prepared.run_id),
             repository.path(),
         ));
-        let promote =
-            FangyuanAuthoringCliOptions::parse_from(["promote", "--run", prepared.run_id.as_str()])
-                .unwrap();
-        assert!(matches!(
-            run_fangyuan_authoring_cli(&promote, repository.path()),
-            Err(FangyuanAuthoringCliError::OperationFailed {
-                code: "promote_not_implemented",
-                ..
-            })
-        ));
+        assert_promotion_failed(
+            run_fangyuan_authoring_cli(&promote_options(&prepared.run_id, None), repository.path()),
+            "canonical_missing_or_unsafe",
+        );
         let run_directory = only_run_directory(&repository);
         assert!(!run_directory.join(CANONICAL_BLUEPRINT_FILE).exists());
         let audit = read_audit_artifact(&run_directory);
@@ -3546,6 +4021,10 @@ mod tests {
         assert_eq!(
             read_promotion_decision(&run_directory).status,
             FangyuanAuthoringPromotionDecisionStatus::Blocked
+        );
+        assert_eq!(
+            read_promotion_report(&run_directory).result,
+            FangyuanAuthoringPromotionResult::Rejected
         );
         assert_eq!(
             fangyuan_authoring_cli_error_exit_code(&FangyuanAuthoringCliError::OperationFailed {
@@ -3594,6 +4073,216 @@ mod tests {
             decision.target_relative_path,
             "project/assets/fangyuan/blueprints/generated/stage1_contract_fixture.ron"
         );
+    }
+
+    #[test]
+    fn promote_writes_only_the_approved_canonical_blueprint_to_the_fixed_target() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+        run_fangyuan_authoring_cli(&validate_options(&prepared.run_id), repository.path()).unwrap();
+
+        let promotion =
+            run_fangyuan_authoring_cli(&promote_options(&prepared.run_id, None), repository.path())
+                .unwrap();
+        assert_eq!(promotion.status, FangyuanAuthoringCommandStatus::Promoted);
+
+        let canonical = fs::read(run_directory.join(CANONICAL_BLUEPRINT_FILE)).unwrap();
+        let target = generated_target(&repository);
+        assert_eq!(fs::read(&target).unwrap(), canonical);
+        assert_eq!(
+            target.strip_prefix(repository.path()).unwrap(),
+            Path::new("project/assets/fangyuan/blueprints/generated/stage1_contract_fixture.ron")
+        );
+        let report = read_promotion_report(&run_directory);
+        assert_eq!(
+            report.schema_version,
+            FANGYUAN_AUTHORING_PROMOTION_REPORT_SCHEMA_VERSION
+        );
+        assert_eq!(report.result, FangyuanAuthoringPromotionResult::Promoted);
+        assert_eq!(report.failure_code, None);
+        assert_eq!(
+            report.new_target_sha256.as_deref(),
+            Some(sha256_hex(&canonical).as_str())
+        );
+        assert!(is_sha256_hex(report.source_task_sha256.as_deref().unwrap()));
+        assert!(is_sha256_hex(
+            report.prepared_task_sha256.as_deref().unwrap()
+        ));
+        assert!(is_sha256_hex(
+            report.catalog_context_sha256.as_deref().unwrap()
+        ));
+        assert!(is_sha256_hex(report.audit_sha256.as_deref().unwrap()));
+        assert!(is_sha256_hex(report.decision_sha256.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn promote_is_idempotent_and_requires_an_explicit_matching_hash_to_replace_content() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+        run_fangyuan_authoring_cli(&validate_options(&prepared.run_id), repository.path()).unwrap();
+        run_fangyuan_authoring_cli(&promote_options(&prepared.run_id, None), repository.path())
+            .unwrap();
+
+        let target = generated_target(&repository);
+        let canonical = fs::read(run_directory.join(CANONICAL_BLUEPRINT_FILE)).unwrap();
+        run_fangyuan_authoring_cli(&promote_options(&prepared.run_id, None), repository.path())
+            .unwrap();
+        let idempotent_report = read_promotion_report(&run_directory);
+        assert_eq!(
+            idempotent_report.result,
+            FangyuanAuthoringPromotionResult::AlreadyCurrent
+        );
+        assert_eq!(fs::read(&target).unwrap(), canonical);
+
+        let old_bytes = b"previous approved blueprint\n".to_vec();
+        fs::write(&target, &old_bytes).unwrap();
+        assert_promotion_failed(
+            run_fangyuan_authoring_cli(&promote_options(&prepared.run_id, None), repository.path()),
+            "target_conflict",
+        );
+        assert_eq!(fs::read(&target).unwrap(), old_bytes);
+
+        assert_promotion_failed(
+            run_fangyuan_authoring_cli(
+                &promote_options(&prepared.run_id, Some(&"0".repeat(64))),
+                repository.path(),
+            ),
+            "target_conflict",
+        );
+        assert_eq!(fs::read(&target).unwrap(), old_bytes);
+
+        let old_sha256 = sha256_hex(&old_bytes);
+        run_fangyuan_authoring_cli(
+            &promote_options(&prepared.run_id, Some(&old_sha256)),
+            repository.path(),
+        )
+        .unwrap();
+        assert_eq!(fs::read(&target).unwrap(), canonical);
+        let replacement_report = read_promotion_report(&run_directory);
+        assert_eq!(
+            replacement_report.old_target_sha256.as_deref(),
+            Some(old_sha256.as_str())
+        );
+        assert_eq!(
+            replacement_report.new_target_sha256.as_deref(),
+            Some(sha256_hex(&canonical).as_str())
+        );
+    }
+
+    #[test]
+    fn promote_rejects_stale_canonical_and_audit_artifacts() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+        run_fangyuan_authoring_cli(&validate_options(&prepared.run_id), repository.path()).unwrap();
+        fs::write(
+            run_directory.join(CANONICAL_BLUEPRINT_FILE),
+            b"stale canonical",
+        )
+        .unwrap();
+        assert_promotion_failed(
+            run_fangyuan_authoring_cli(&promote_options(&prepared.run_id, None), repository.path()),
+            "canonical_invalid",
+        );
+        assert!(!generated_target(&repository).exists());
+
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+        run_fangyuan_authoring_cli(&validate_options(&prepared.run_id), repository.path()).unwrap();
+        let mut audit = read_audit_artifact(&run_directory);
+        audit.report.error_count = 1;
+        audit.report.status = FangyuanAuthoringAuditSnapshotStatus::Failed;
+        fs::write(
+            run_directory.join(AUDIT_REPORT_FILE),
+            canonical_json_bytes(&audit).unwrap(),
+        )
+        .unwrap();
+        assert_promotion_failed(
+            run_fangyuan_authoring_cli(&promote_options(&prepared.run_id, None), repository.path()),
+            "audit_not_approved",
+        );
+        assert_eq!(
+            read_promotion_report(&run_directory)
+                .failure_code
+                .as_deref(),
+            Some("audit_not_approved")
+        );
+        assert!(!generated_target(&repository).exists());
+    }
+
+    #[test]
+    fn promote_rejects_an_illegal_target_and_a_non_directory_target_parent() {
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+        run_fangyuan_authoring_cli(&validate_options(&prepared.run_id), repository.path()).unwrap();
+        let mut decision = read_promotion_decision(&run_directory);
+        decision.target_relative_path = "project/assets/fangyuan/blueprints/other.ron".to_string();
+        fs::write(
+            run_directory.join(PROMOTION_DECISION_FILE),
+            canonical_json_bytes(&decision).unwrap(),
+        )
+        .unwrap();
+        assert_promotion_failed(
+            run_fangyuan_authoring_cli(&promote_options(&prepared.run_id, None), repository.path()),
+            "decision_not_ready",
+        );
+        assert!(
+            !repository
+                .path()
+                .join("project/assets/fangyuan/blueprints/other.ron")
+                .exists()
+        );
+
+        let repository = temporary_repository();
+        write_fixture_task(&repository);
+        let prepared = run_fangyuan_authoring_cli(&prepare_options(), repository.path()).unwrap();
+        let run_directory = only_run_directory(&repository);
+        write_run_draft(
+            &run_directory,
+            include_bytes!("fixtures/authoring/valid_codex_draft.ron"),
+        );
+        run_fangyuan_authoring_cli(&validate_options(&prepared.run_id), repository.path()).unwrap();
+        fs::write(
+            repository.path().join("project/assets/fangyuan/blueprints"),
+            b"not a directory",
+        )
+        .unwrap();
+        assert_promotion_failed(
+            run_fangyuan_authoring_cli(&promote_options(&prepared.run_id, None), repository.path()),
+            "target_invalid",
+        );
+        let report = read_promotion_report(&run_directory);
+        assert_eq!(report.failure_code.as_deref(), Some("target_invalid"));
+        assert!(!generated_target(&repository).exists());
     }
 
     #[test]
