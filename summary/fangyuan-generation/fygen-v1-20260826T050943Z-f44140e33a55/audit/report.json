@@ -1,0 +1,459 @@
+{
+  "schema_version": "fangyuan-generation-audit-report/v1",
+  "prepared_task_sha256": "80a13f361168c814f3d9340aa02e049310c8e8c2a0d6f58afa0ac15e4464c9b9",
+  "catalog_context_sha256": "1abd02d98c06c528870ebe932a9c5006640cc88a152d4e422a1e97c84678a18d",
+  "draft_sha256": "2f1e987d74be8b2f553f3226b167404b70c1caa42ccec2f52a4d5ac38b120e8a",
+  "canonical_sha256": "1bfa3dd0b3d2435ce2fef72bccc7fb197a44bba11a06af2cbd69c737cf1413bc",
+  "warning_policy": "warnings_allowed_when_error_count_is_zero",
+  "repair_actions": [],
+  "original_report": {
+    "status": "passed",
+    "error_count": 0,
+    "warning_count": 0,
+    "info_count": 0,
+    "findings": [],
+    "suggestions": []
+  },
+  "report": {
+    "status": "passed",
+    "error_count": 0,
+    "warning_count": 0,
+    "info_count": 0,
+    "findings": [],
+    "suggestions": []
+  },
+  "requested_resolved_presets": [
+    {
+      "primitive_index": 0,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 1,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 2,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 3,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 4,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 5,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 6,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 7,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 8,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 9,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 10,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 11,
+      "requested_preset_id": "material:surface/x04/y00",
+      "resolved_preset_id": "material:surface/x04/y00",
+      "noise_enabled": true
+    },
+    {
+      "primitive_index": 12,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 13,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 14,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 15,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 16,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 17,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 18,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 19,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 20,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 21,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 22,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 23,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 24,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 25,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 26,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 27,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 28,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 29,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 30,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 31,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 32,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 33,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 34,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 35,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 36,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 37,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 38,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 39,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 40,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 41,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 42,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 43,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 44,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 45,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 46,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 47,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 48,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 49,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 50,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 51,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 52,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 53,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 54,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 55,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 56,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 57,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 58,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 59,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 60,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 61,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 62,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 63,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 64,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 65,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 66,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 67,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 68,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 69,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 70,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 71,
+      "requested_preset_id": "material:surface/x06/y12",
+      "resolved_preset_id": "material:surface/x06/y12",
+      "noise_enabled": false
+    }
+  ]
+}

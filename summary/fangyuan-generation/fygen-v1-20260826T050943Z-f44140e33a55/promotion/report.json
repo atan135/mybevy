@@ -1,0 +1,15 @@
+{
+  "schema_version": "fangyuan-generation-promotion-report/v1",
+  "run_id": "fygen-v1-20260826T050943Z-f44140e33a55",
+  "source_task_sha256": "b29ebeb697de72b66c38e6ab138d92da02a08f8a1d4906d75e53370f499b45ab",
+  "prepared_task_sha256": "80a13f361168c814f3d9340aa02e049310c8e8c2a0d6f58afa0ac15e4464c9b9",
+  "catalog_context_sha256": "1abd02d98c06c528870ebe932a9c5006640cc88a152d4e422a1e97c84678a18d",
+  "canonical_sha256": "1bfa3dd0b3d2435ce2fef72bccc7fb197a44bba11a06af2cbd69c737cf1413bc",
+  "audit_sha256": "8b09da53f2b557145a1700f836ac0f3b96b22ccf872faa982fa8410edfe5f7ce",
+  "decision_sha256": "3c75f2f8df3c05eec2a4c6214567f6dce91c26e67b557e0d1f793f3e2716bdaa",
+  "target_relative_path": "project/assets/fangyuan/blueprints/generated/qingyu_mechanism_tower_fixture.ron",
+  "old_target_sha256": null,
+  "new_target_sha256": "1bfa3dd0b3d2435ce2fef72bccc7fb197a44bba11a06af2cbd69c737cf1413bc",
+  "expected_old_sha256": null,
+  "result": "promoted"
+}

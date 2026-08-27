@@ -1,0 +1,126 @@
+{
+  "schema_version": "fangyuan-generation-catalog-context/v1",
+  "prepared_task_sha256": "7145e5ce38f4cb3703a7080a0abe565c750c6e46d27f624bb8ad44ef421f7666",
+  "catalog_content_sha256": "7eb68bbd53b98155888370bca3f0e64b3ab6b30c82af6be2e401298009b9954c",
+  "catalog_dependency_sha256": "4bc04bf7753c7a46e9c1c3d75685412587c7efe0ddece169750fa027f9984e16",
+  "sampling_contract": {
+    "surface_color_normal_coordinates": "same_surface_preset_coordinates",
+    "noise_coordinates": "independent_registered_noise_suggestion",
+    "ambient_occlusion": 1.0,
+    "pbr_parameter_status": "semantic_estimate"
+  },
+  "selection": {
+    "strategy": "role_and_purpose",
+    "confidence": "low",
+    "reason": "task roles and object purpose prioritize at most three catalog presets"
+  },
+  "presets": [
+    {
+      "preset_id": "material:surface/x00/y01",
+      "name_zh": "拉丝不锈钢",
+      "description_zh": "纵向金属拉丝",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.84,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.82,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x00/y02",
+      "name_zh": "浅色原木板",
+      "description_zh": "纵向直木纹",
+      "material_family": "wood_bark",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.68,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.72,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x01/y01",
+      "name_zh": "严重生锈铁皮",
+      "description_zh": "红褐色锈斑",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.84,
+        "metallic": 0.2,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.82,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    }
+  ]
+}

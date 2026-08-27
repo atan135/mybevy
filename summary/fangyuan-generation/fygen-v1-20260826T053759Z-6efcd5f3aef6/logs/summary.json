@@ -1,0 +1,26 @@
+{
+  "schema_version": "fangyuan-generation-log-summary/v1",
+  "run_id": "fygen-v1-20260826T053759Z-6efcd5f3aef6",
+  "events": [
+    {
+      "stage": "prepare_task",
+      "code": "catalog_context_prepared",
+      "artifact_sha256": "9dad52ad92b6dc415d6a246beecd5434856e931ccacb71652e0f6f0b5a6c104e"
+    },
+    {
+      "stage": "prepare_task",
+      "code": "prepared",
+      "artifact_sha256": "00d59e8745a5af9428a914e524ac1393f80ae08a9771ff87361681259733c4c6"
+    },
+    {
+      "stage": "promote",
+      "code": "promoted",
+      "artifact_sha256": "0e0c715488e2541a9d26540a25a24074cd6bb79f0c14c468a6a175c7ef899c47"
+    },
+    {
+      "stage": "validate_draft",
+      "code": "validated_ready",
+      "artifact_sha256": "b5aa5691351eab7e698a3bfc3e55448d53aedce5528103d30b29013beead5639"
+    }
+  ]
+}

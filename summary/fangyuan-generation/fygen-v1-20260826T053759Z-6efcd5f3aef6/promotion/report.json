@@ -1,0 +1,15 @@
+{
+  "schema_version": "fangyuan-generation-promotion-report/v1",
+  "run_id": "fygen-v1-20260826T053759Z-6efcd5f3aef6",
+  "source_task_sha256": "00d59e8745a5af9428a914e524ac1393f80ae08a9771ff87361681259733c4c6",
+  "prepared_task_sha256": "7145e5ce38f4cb3703a7080a0abe565c750c6e46d27f624bb8ad44ef421f7666",
+  "catalog_context_sha256": "9dad52ad92b6dc415d6a246beecd5434856e931ccacb71652e0f6f0b5a6c104e",
+  "canonical_sha256": "0e0c715488e2541a9d26540a25a24074cd6bb79f0c14c468a6a175c7ef899c47",
+  "audit_sha256": "b5aa5691351eab7e698a3bfc3e55448d53aedce5528103d30b29013beead5639",
+  "decision_sha256": "acbb941ac79a21459c63fd8e04673bf8b90f2f5400ede2e6810160cf67c9c4f8",
+  "target_relative_path": "project/assets/fangyuan/blueprints/generated/stage1_contract_fixture.ron",
+  "old_target_sha256": null,
+  "new_target_sha256": "0e0c715488e2541a9d26540a25a24074cd6bb79f0c14c468a6a175c7ef899c47",
+  "expected_old_sha256": null,
+  "result": "promoted"
+}

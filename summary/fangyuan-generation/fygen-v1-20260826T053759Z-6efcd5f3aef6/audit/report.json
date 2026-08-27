@@ -1,0 +1,45 @@
+{
+  "schema_version": "fangyuan-generation-audit-report/v1",
+  "prepared_task_sha256": "7145e5ce38f4cb3703a7080a0abe565c750c6e46d27f624bb8ad44ef421f7666",
+  "catalog_context_sha256": "9dad52ad92b6dc415d6a246beecd5434856e931ccacb71652e0f6f0b5a6c104e",
+  "draft_sha256": "811d159706f5421eb76947a8b2eef3a9867d3bf602c4b8a942d4be5a73efc747",
+  "canonical_sha256": "0e0c715488e2541a9d26540a25a24074cd6bb79f0c14c468a6a175c7ef899c47",
+  "warning_policy": "warnings_allowed_when_error_count_is_zero",
+  "repair_actions": [],
+  "original_report": {
+    "status": "passed",
+    "error_count": 0,
+    "warning_count": 0,
+    "info_count": 0,
+    "findings": [],
+    "suggestions": []
+  },
+  "report": {
+    "status": "passed",
+    "error_count": 0,
+    "warning_count": 0,
+    "info_count": 0,
+    "findings": [],
+    "suggestions": []
+  },
+  "requested_resolved_presets": [
+    {
+      "primitive_index": 0,
+      "requested_preset_id": "material:surface/x00/y02",
+      "resolved_preset_id": "material:surface/x00/y02",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 1,
+      "requested_preset_id": "material:surface/x00/y01",
+      "resolved_preset_id": "material:surface/x00/y01",
+      "noise_enabled": false
+    },
+    {
+      "primitive_index": 2,
+      "requested_preset_id": "material:surface/x00/y02",
+      "resolved_preset_id": "material:surface/x00/y02",
+      "noise_enabled": false
+    }
+  ]
+}

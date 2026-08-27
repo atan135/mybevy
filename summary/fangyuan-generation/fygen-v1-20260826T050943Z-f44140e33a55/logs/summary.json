@@ -1,0 +1,36 @@
+{
+  "schema_version": "fangyuan-generation-log-summary/v1",
+  "run_id": "fygen-v1-20260826T050943Z-f44140e33a55",
+  "events": [
+    {
+      "stage": "prepare_task",
+      "code": "catalog_context_prepared",
+      "artifact_sha256": "1abd02d98c06c528870ebe932a9c5006640cc88a152d4e422a1e97c84678a18d"
+    },
+    {
+      "stage": "prepare_task",
+      "code": "prepared",
+      "artifact_sha256": "b29ebeb697de72b66c38e6ab138d92da02a08f8a1d4906d75e53370f499b45ab"
+    },
+    {
+      "stage": "promote",
+      "code": "promoted",
+      "artifact_sha256": "1bfa3dd0b3d2435ce2fef72bccc7fb197a44bba11a06af2cbd69c737cf1413bc"
+    },
+    {
+      "stage": "validate_draft",
+      "code": "validated_blocked",
+      "artifact_sha256": "63d601cf29ec41939d673729386b0ba7d51d492c93984cb6357b0c9fb0bdfc00"
+    },
+    {
+      "stage": "validate_draft",
+      "code": "validated_ready",
+      "artifact_sha256": "8b09da53f2b557145a1700f836ac0f3b96b22ccf872faa982fa8410edfe5f7ce"
+    },
+    {
+      "stage": "validate_draft",
+      "code": "validated_ready",
+      "artifact_sha256": "8b09da53f2b557145a1700f836ac0f3b96b22ccf872faa982fa8410edfe5f7ce"
+    }
+  ]
+}

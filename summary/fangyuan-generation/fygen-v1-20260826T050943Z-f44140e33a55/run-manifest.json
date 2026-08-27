@@ -1,0 +1,74 @@
+{
+  "schema_version": "fangyuan-generation-run/v1",
+  "run_id": "fygen-v1-20260826T050943Z-f44140e33a55",
+  "created_at_utc": "2026-08-26T05:09:43Z",
+  "time_source": "local_tool_clock",
+  "codex_task_protocol": {
+    "prompt_template_version": "fangyuan-local-codex-draft/v1",
+    "prepared_task_sha256": "80a13f361168c814f3d9340aa02e049310c8e8c2a0d6f58afa0ac15e4464c9b9",
+    "catalog_context_sha256": "1abd02d98c06c528870ebe932a9c5006640cc88a152d4e422a1e97c84678a18d",
+    "draft_sha256": "2f1e987d74be8b2f553f3226b167404b70c1caa42ccec2f52a4d5ac38b120e8a"
+  },
+  "artifacts": [
+    {
+      "path": "input/task.source.json",
+      "schema_version": "fangyuan-generation-task/v1",
+      "bytes": 1501,
+      "sha256": "b29ebeb697de72b66c38e6ab138d92da02a08f8a1d4906d75e53370f499b45ab"
+    },
+    {
+      "path": "input/task.prepared.json",
+      "schema_version": "fangyuan-generation-prepared-task/v1",
+      "bytes": 1837,
+      "sha256": "80a13f361168c814f3d9340aa02e049310c8e8c2a0d6f58afa0ac15e4464c9b9"
+    },
+    {
+      "path": "input/catalog-context.json",
+      "schema_version": "fangyuan-generation-catalog-context/v1",
+      "bytes": 79407,
+      "sha256": "1abd02d98c06c528870ebe932a9c5006640cc88a152d4e422a1e97c84678a18d"
+    },
+    {
+      "path": "input/codex-task.md",
+      "schema_version": "fangyuan-generation-codex-task/v1",
+      "bytes": 3966,
+      "sha256": "b1d7c3a34d2f79319131e5ed925f4f278968a247fb904c5bf19c904d6ff9c3b1"
+    },
+    {
+      "path": "draft/blueprint.ron",
+      "schema_version": "fangyuan-blueprint-ron/v1",
+      "bytes": 15300,
+      "sha256": "2f1e987d74be8b2f553f3226b167404b70c1caa42ccec2f52a4d5ac38b120e8a"
+    },
+    {
+      "path": "canonical/blueprint.ron",
+      "schema_version": "fangyuan-blueprint-ron/v1",
+      "bytes": 17031,
+      "sha256": "1bfa3dd0b3d2435ce2fef72bccc7fb197a44bba11a06af2cbd69c737cf1413bc"
+    },
+    {
+      "path": "audit/report.json",
+      "schema_version": "fangyuan-generation-audit-report/v1",
+      "bytes": 14094,
+      "sha256": "8b09da53f2b557145a1700f836ac0f3b96b22ccf872faa982fa8410edfe5f7ce"
+    },
+    {
+      "path": "promotion/decision.json",
+      "schema_version": "fangyuan-generation-promotion-decision/v1",
+      "bytes": 583,
+      "sha256": "3c75f2f8df3c05eec2a4c6214567f6dce91c26e67b557e0d1f793f3e2716bdaa"
+    },
+    {
+      "path": "promotion/report.json",
+      "schema_version": "fangyuan-generation-promotion-report/v1",
+      "bytes": 951,
+      "sha256": "66add6d670bbdea464c7187048f2d2b18ba87b32ceb68a6c46f95044cb5bd270"
+    },
+    {
+      "path": "logs/summary.json",
+      "schema_version": "fangyuan-generation-log-summary/v1",
+      "bytes": 1145,
+      "sha256": "f10802da5cbaf3da1d2c5904f8286ee7080483f90b29478183f9e859bd8f3332"
+    }
+  ]
+}

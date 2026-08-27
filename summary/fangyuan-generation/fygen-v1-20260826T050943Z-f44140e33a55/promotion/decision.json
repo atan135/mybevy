@@ -1,0 +1,10 @@
+{
+  "schema_version": "fangyuan-generation-promotion-decision/v1",
+  "canonical_sha256": "1bfa3dd0b3d2435ce2fef72bccc7fb197a44bba11a06af2cbd69c737cf1413bc",
+  "catalog_context_sha256": "1abd02d98c06c528870ebe932a9c5006640cc88a152d4e422a1e97c84678a18d",
+  "audit_sha256": "8b09da53f2b557145a1700f836ac0f3b96b22ccf872faa982fa8410edfe5f7ce",
+  "target_relative_path": "project/assets/fangyuan/blueprints/generated/qingyu_mechanism_tower_fixture.ron",
+  "expected_target_sha256": null,
+  "status": "ready_for_promotion",
+  "warning_policy": "warnings_allowed_when_error_count_is_zero"
+}

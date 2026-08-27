@@ -1,0 +1,2994 @@
+{
+  "schema_version": "fangyuan-generation-catalog-context/v1",
+  "prepared_task_sha256": "80a13f361168c814f3d9340aa02e049310c8e8c2a0d6f58afa0ac15e4464c9b9",
+  "catalog_content_sha256": "7eb68bbd53b98155888370bca3f0e64b3ab6b30c82af6be2e401298009b9954c",
+  "catalog_dependency_sha256": "4bc04bf7753c7a46e9c1c3d75685412587c7efe0ddece169750fa027f9984e16",
+  "sampling_contract": {
+    "surface_color_normal_coordinates": "same_surface_preset_coordinates",
+    "noise_coordinates": "independent_registered_noise_suggestion",
+    "ambient_occlusion": 1.0,
+    "pbr_parameter_status": "semantic_estimate"
+  },
+  "selection": {
+    "strategy": "material_keyword",
+    "confidence": "high",
+    "reason": "task material keywords match validated catalog families"
+  },
+  "presets": [
+    {
+      "preset_id": "material:surface/x00/y00",
+      "name_zh": "红砖墙面",
+      "description_zh": "外墙砌砖",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x00/y01",
+      "name_zh": "拉丝不锈钢",
+      "description_zh": "纵向金属拉丝",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.84,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.82,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x00/y08",
+      "name_zh": "复古地中海花砖",
+      "description_zh": "蓝色几何花纹",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x00/y09",
+      "name_zh": "奥斯曼图案花砖",
+      "description_zh": "古典复古花纹",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x00/y10",
+      "name_zh": "复古黄色陶瓷花砖",
+      "description_zh": "传统厨房瓷砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x00/y11",
+      "name_zh": "蓝花陶瓷面砖",
+      "description_zh": "卫生间墙砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x01/y00",
+      "name_zh": "灰泥抹灰墙",
+      "description_zh": "浅灰涂料",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x01/y01",
+      "name_zh": "严重生锈铁皮",
+      "description_zh": "红褐色锈斑",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.84,
+        "metallic": 0.2,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.82,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x01/y08",
+      "name_zh": "西班牙传统瓷砖",
+      "description_zh": "圆形辐射图案",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x01/y09",
+      "name_zh": "摩洛哥风饰面砖",
+      "description_zh": "星形/花纹砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x01/y10",
+      "name_zh": "青花风格瓷砖",
+      "description_zh": "古典蓝白图案",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x01/y11",
+      "name_zh": "碎花图案瓷砖",
+      "description_zh": "复古印花瓷砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x02/y00",
+      "name_zh": "白色大理石",
+      "description_zh": "带浅灰细纹",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x02/y01",
+      "name_zh": "氧化铜绿表面",
+      "description_zh": "带有绿锈的铜斑",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.84,
+        "metallic": 0.2,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.82,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x02/y08",
+      "name_zh": "蓝色马赛克小砖",
+      "description_zh": "小方格拼贴",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x02/y09",
+      "name_zh": "欧式复古铸铁花纹",
+      "description_zh": "深色压花金属",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x02/y10",
+      "name_zh": "编织细网格纹",
+      "description_zh": "金属/织物细网",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x02/y11",
+      "name_zh": "黑色钢铁纹理",
+      "description_zh": "带微弱拉丝",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x02/y14",
+      "name_zh": "灰色砌砖墙面",
+      "description_zh": "灰砖砌筑墙",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x03/y00",
+      "name_zh": "抛光白大理石",
+      "description_zh": "高光大理石",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.22,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.4,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x03/y01",
+      "name_zh": "抛光黄铜面板",
+      "description_zh": "金色金属光泽",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.22,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.4,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x03/y08",
+      "name_zh": "经典雕花金属板",
+      "description_zh": "欧式雕花贴面",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x03/y09",
+      "name_zh": "几何交错金属花纹",
+      "description_zh": "立体几何压花",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x03/y10",
+      "name_zh": "金色网格面",
+      "description_zh": "高档编织金属",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x03/y11",
+      "name_zh": "暗黑工业金属",
+      "description_zh": "无光泽硬表面",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.68,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.4,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x03/y12",
+      "name_zh": "灰色水泥地面",
+      "description_zh": "平整浇筑混凝土",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x03/y13",
+      "name_zh": "蓝漆磨损表面",
+      "description_zh": "工业掉漆金属",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.05,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x03/y14",
+      "name_zh": "白石砌块墙",
+      "description_zh": "规则方石建筑墙",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x04/y00",
+      "name_zh": "铺路石块墙",
+      "description_zh": "传统石砌墙",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x04/y01",
+      "name_zh": "哑光磨砂黄铜",
+      "description_zh": "沉稳暗金金属",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.68,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x04/y13",
+      "name_zh": "蓝白花纹瓷砖",
+      "description_zh": "青花图案花砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x04/y15",
+      "name_zh": "灰白水泥墙",
+      "description_zh": "刷漆混凝土",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x05/y00",
+      "name_zh": "板岩瓦片",
+      "description_zh": "暗灰瓦面",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x05/y01",
+      "name_zh": "镀锌钢板",
+      "description_zh": "带金属结晶花纹",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x05/y12",
+      "name_zh": "标准白色方块瓷砖",
+      "description_zh": "小瓷砖网格",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x05/y13",
+      "name_zh": "蓝块渐变瓷砖",
+      "description_zh": "浅蓝渐变贴砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x05/y15",
+      "name_zh": "粗糙外墙抹灰",
+      "description_zh": "粒状墙面漆",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.84,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.82,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x06/y01",
+      "name_zh": "蓝色涂层金属板",
+      "description_zh": "工业机器外壳",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.05,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x06/y08",
+      "name_zh": "蓝白交错瓷砖",
+      "description_zh": "小清新型花砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x06/y09",
+      "name_zh": "灰色压花地面",
+      "description_zh": "带十字凸起防滑",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x06/y10",
+      "name_zh": "编织编框金属",
+      "description_zh": "粗金属线条编织",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x06/y11",
+      "name_zh": "小圆点网孔板",
+      "description_zh": "规则打孔金属",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x06/y12",
+      "name_zh": "蓝色游泳池瓷砖",
+      "description_zh": "小方块泳池砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x06/y13",
+      "name_zh": "长条形白瓷砖",
+      "description_zh": "地铁砖/工字拼贴",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x07/y01",
+      "name_zh": "铸铁生锈表面",
+      "description_zh": "深暗色生锈铸铁",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.84,
+        "metallic": 0.2,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.82,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x07/y08",
+      "name_zh": "蓝灰格纹瓷砖",
+      "description_zh": "厨卫防滑瓷砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x07/y09",
+      "name_zh": "工业网格踏板",
+      "description_zh": "防滑冲压钢板",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x07/y10",
+      "name_zh": "高密度穿孔板",
+      "description_zh": "工业吸音/通风板",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x07/y11",
+      "name_zh": "黑色大理石",
+      "description_zh": "带有白色闪电裂纹",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x07/y12",
+      "name_zh": "工字拼贴蓝色墙砖",
+      "description_zh": "长方形卫浴砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x08/y00",
+      "name_zh": "混凝土砌块",
+      "description_zh": "工业混凝土砖",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x08/y01",
+      "name_zh": "铝合金拉丝板",
+      "description_zh": "银灰轻金属",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x08/y11",
+      "name_zh": "爵士白大理石",
+      "description_zh": "经典大理石花纹",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x09/y00",
+      "name_zh": "红波浪屋顶瓦",
+      "description_zh": "陶土粘土瓦",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x09/y01",
+      "name_zh": "暗色金属铸造",
+      "description_zh": "铸铁磨砂质感",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.68,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x09/y08",
+      "name_zh": "蓝钢金属四方块",
+      "description_zh": "带有凸起边框",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x09/y09",
+      "name_zh": "编制网状金属",
+      "description_zh": "高密度通风网",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x09/y11",
+      "name_zh": "大理石裂纹细节",
+      "description_zh": "灰白交叉石纹",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x10/y00",
+      "name_zh": "粗糙水质磨石",
+      "description_zh": "水洗石地坪",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.38,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.82,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x10/y01",
+      "name_zh": "金属打孔网格",
+      "description_zh": "菱形/网状通孔",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x10/y08",
+      "name_zh": "黄色防滑地砖",
+      "description_zh": "盲道/工业凸点砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x10/y09",
+      "name_zh": "立体块状金属墙",
+      "description_zh": "交错模块面板",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x10/y10",
+      "name_zh": "绿色大理石",
+      "description_zh": "带白斑花纹",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x10/y11",
+      "name_zh": "红砖墙工字拼贴",
+      "description_zh": "标准建筑砖墙",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x11/y08",
+      "name_zh": "白钢雕花面板",
+      "description_zh": "高光金属压花",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.22,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.4,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x11/y09",
+      "name_zh": "黄色模块化凸起墙",
+      "description_zh": "现代建筑外墙",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x11/y10",
+      "name_zh": "红砖面砌墙",
+      "description_zh": "标准人字/工字砌法",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x11/y11",
+      "name_zh": "砖块地面铺设",
+      "description_zh": "红砖平铺地面",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x12/y00",
+      "name_zh": "蓝漆金属板",
+      "description_zh": "带有横向缝隙",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.05,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x12/y01",
+      "name_zh": "银色冲压金属板",
+      "description_zh": "带工业冲压痕迹",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x12/y10",
+      "name_zh": "红褐色老砖墙",
+      "description_zh": "带岁月磨损",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x12/y12",
+      "name_zh": "灰色漆面金属",
+      "description_zh": "光滑工业喷漆",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.22,
+        "metallic": 0.05,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.4,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x13/y00",
+      "name_zh": "砖石砌墙",
+      "description_zh": "规则方石砌结构",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x13/y01",
+      "name_zh": "带有锁孔的铁门结构",
+      "description_zh": "铸铁门件",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x13/y10",
+      "name_zh": "工业地基红砖铺路",
+      "description_zh": "公园人行砖",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x14/y00",
+      "name_zh": "砌体小方石铺地",
+      "description_zh": "小方石阵列",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x14/y01",
+      "name_zh": "铁皮防滑板",
+      "description_zh": "带花纹防滑金属",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x14/y03",
+      "name_zh": "联锁人行道砖",
+      "description_zh": "C型混凝土铺路砖",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x14/y04",
+      "name_zh": "工字形透水砖",
+      "description_zh": "城市人行道砖",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x14/y05",
+      "name_zh": "方形铺路石砖",
+      "description_zh": "灰方石拼贴",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x14/y06",
+      "name_zh": "灰色外墙面砖",
+      "description_zh": "建筑外墙贴砖",
+      "material_family": "ceramic_tile",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.34,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.46,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x14/y15",
+      "name_zh": "细颗粒抹灰墙",
+      "description_zh": "室内白墙颗粒",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.78,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.8,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x15/y00",
+      "name_zh": "瓦楞铁皮屋顶",
+      "description_zh": "工业波纹金属",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x15/y01",
+      "name_zh": "带螺栓铆接金属板",
+      "description_zh": "工业铆接缝",
+      "material_family": "metal",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure",
+        "prop",
+        "panel"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.42,
+        "metallic": 0.9,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.48,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x15/y14",
+      "name_zh": "粗糙混凝土墙面",
+      "description_zh": "工业风水泥墙",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.84,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.82,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    },
+    {
+      "preset_id": "material:surface/x15/y15",
+      "name_zh": "粗糙沙浆墙面",
+      "description_zh": "毛坯水泥墙",
+      "material_family": "masonry",
+      "preferred_roles": [
+        "wall",
+        "floor",
+        "roof",
+        "structure"
+      ],
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "pbr": {
+        "roughness": 0.84,
+        "metallic": 0.0,
+        "reflectance": 0.5,
+        "normal_enabled": true,
+        "normal_strength": 0.82,
+        "ambient_occlusion": 1.0,
+        "parameter_source": "family_default_with_keyword_adjustment",
+        "physical_status": "estimated_not_measured"
+      },
+      "projection": "planar_or_triplanar",
+      "render_model": "standard_pbr",
+      "noise_suggestion": {
+        "targets": [
+          "roughness"
+        ],
+        "parameter_status": "optional_visual_modulation"
+      }
+    }
+  ]
+}

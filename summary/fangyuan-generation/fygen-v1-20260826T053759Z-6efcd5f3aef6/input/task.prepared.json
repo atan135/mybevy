@@ -1,0 +1,62 @@
+{
+  "schema_version": "fangyuan-generation-prepared-task/v1",
+  "source_task_sha256": "00d59e8745a5af9428a914e524ac1393f80ae08a9771ff87361681259733c4c6",
+  "task": {
+    "schema_version": "fangyuan-generation-task/v1",
+    "task_id": "stage1-contract-fixture",
+    "stable_id": "stage1_contract_fixture",
+    "object_purpose": "scene_decoration",
+    "prompt": "生成一个用于合同验证的单体方圆场景装饰。结构以方形基座、圆形核心和少量边界装饰组成；保持简洁、无玩法效果。",
+    "budget": {
+      "max_primitives": 24,
+      "bounds": {
+        "width": 8.0,
+        "depth": 8.0,
+        "height": 8.0
+      },
+      "max_primitive_volume": 64.0,
+      "max_total_volume": 512.0
+    },
+    "allowed": {
+      "primitive_kinds": [
+        "cube",
+        "sphere"
+      ],
+      "roles": [
+        "structure",
+        "core",
+        "boundary",
+        "decoration"
+      ]
+    },
+    "material_budget": {
+      "max_surface_presets": 4,
+      "max_material_profiles": 4,
+      "allow_catalog_suggested_noise": true,
+      "max_catalog_noise_suggestions_per_preset": 1,
+      "allow_arbitrary_overrides": false
+    },
+    "forbidden_features": [
+      "absolute_path",
+      "url",
+      "credential",
+      "network_call",
+      "script",
+      "shader",
+      "atlas_uv",
+      "atlas_tile_index",
+      "noise_tile_id",
+      "noise_strength",
+      "arbitrary_pbr_override",
+      "material_binding_table",
+      "rotation",
+      "free_mesh",
+      "gameplay_override"
+    ],
+    "additional_forbidden_features": [
+      "transparent",
+      "emissive",
+      "special_surface"
+    ]
+  }
+}

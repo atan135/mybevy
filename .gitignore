@@ -35,12 +35,6 @@ fangyuan-bake-report.txt
 # Local helper notes
 /local_help.txt
 
-# Local summary notes
-/summary/*
-!/summary/.gitkeep
-# Private visual-audit references and run artifacts remain local.
-/summary/ui-visual-audit/
-
 # OS-generated files
 .DS_Store
 Thumbs.db

@@ -1,0 +1,269 @@
+# 主世界联机回归记录
+
+## 2026-08-21 当前完成进度
+
+| 项目 | 状态 | 已验证证据 | 仍需处理 |
+| --- | --- | --- | --- |
+| P0-1：旧请求推进新进场 | 已完成 | `aca8a53` 为 Join/Ready/Leave/Reconnect 的 request、response 和 failure 绑定 `ConnectionId`；入口同时校验 character、attempt/correlation 与 current connection。`cargo test --lib main_world_entry` 45 passed。 | 尚未引入跨模块统一的 `WorldSessionId` / `ConnectionEpoch` 类型，但旧连接响应不能推进当前进场。 |
+| P0-2a：重连必须等待新权威快照 | 已完成 | 重连后先重新鉴权、Join/Start，再接收新 epoch 快照，最后进入 `recovered active`。`1c89693` 补充从游戏列表再次进入时的自动游戏鉴权和重进场；`9d3ebd5` 替换服务端重启后半开的旧 KCP 连接，并在代理短暂不可用时继续恢复重试。实机已确认恢复后持续收到 authority frame、正常收帧不误触发 watchdog、恢复超时回 Lobby 且可从游戏列表重新进入。 | 连接断开检测仍依赖 keepalive 超时；更深层协议类型收敛不在本 session 范围。 |
+| P0-2b：服务重启后的移动时钟 | 已完成 | `c44614c` 在完整房间快照帧回退时开启新的 authority clock epoch，清理旧预测/输入基线并从低帧继续发送。`ab56822` 将 snapshot epoch 提升到统一总线；`cargo test --lib main_world_movement` 51 passed。 | 仍需用 watchdog 缩短服务重启后的失联发现时间。 |
+| P0-3：Failed / Cancel 统一回滚事务 | 已完成 | 失败先进入 `Exiting`，冻结输入并保留关联中的 Join；等待 scoped `RoomLeft`（或断线/超时降级）和 Scene Exit 后，才清理 entry snapshot/pending/identity 并转入 `Failed`。Join 超时的迟到成功仍会补偿 Leave；角色/环境前置条件失效复用相同退出事务。`cargo test --lib main_world_entry` 43 passed。 | 尚未引入跨模块统一的 `WorldSessionId` / `ConnectionEpoch` 类型。 |
+| P0-4：Scene Ready 与场景内容 Ready 分离 | 已完成 | `SceneEvent::Ready` 与 `MainWorldContentEvent::Ready` 分别验证同一 session；只有两者和权威快照齐备才发送一次 `SetReady`。内容实例化任一步失败会发 `MainWorldContentEvent::Failed`，进入 P0-3 rollback；框架 SceneFailure 视为场景侧已结算，仍完成房间回滚。`cargo test --lib main_world_entry` 45 passed。 | 初始玩家快照 gate 已接入统一总线，仍需补真实服务重启后的 watchdog 联合验收。 |
+| 多人快照统一总线与显式 snapshot epoch | 已完成 | `ab56822` 新增 `MainWorldSnapshotEvent` 和 `MainWorldSnapshotBusState`，Entry/Players/Movement 统一消费 typed snapshot；完整快照、恢复快照和增量移动快照显式携带 epoch/completeness，不再由下游解析 wire reason。`cargo test --lib main_world_snapshot` 3 passed、`main_world_entry` 45 passed、`main_world_movement` 51 passed、`main_world_players` 30 passed。 | 跨模块统一的 `WorldSessionId` / `ConnectionEpoch` 类型仍未全面替换现有 generation/attempt/connection 字段。 |
+| 远端掉线可见性 | 已完成 | `18d81a6` 已覆盖断线玩家清理与移动同步；此前双客户端实测确认下线实体消失。 | 可选：增加离线 grace period 和 UI 标识。 |
+| 远端插值追帧 | 已完成 | `c8ba7fe` 及 `main_world_movement` 回归测试覆盖自适应追帧。 | 已接入统一快照总线，仍需真实服务重启后复核跨 epoch 行为。 |
+| 玩家蓝图/Prefab 缓存 | 待处理 | 无。 | 避免每个快照重复读 RON、解析并编译 primitive set。 |
+| 主世界帧接收 watchdog | 已实现并完成本轮实机验收 | `1c89693` 记录每次主世界权威帧活动序号；在 Active 且连续 5 秒无新帧时发送 `Recover`，复用已有恢复事务；`9d3ebd5` 补充半开连接替换、恢复重试和恢复期间视觉保持。实机确认服务端重启后恢复到 Active，正常收帧不误触发，恢复超时只回 Lobby。 | keepalive/watchdog 参数和更完整断线窗口覆盖可在后续需要时单独处理。 |
+| 服务端逐帧 INFO 日志降噪 | 待处理 | `broadcast_to_room` 和 `FRAME Bundle` 当前按每帧 `INFO` 输出，20 FPS 时持续刷屏；功能行为本身正常。 | 将逐帧诊断降为 `DEBUG/TRACE` 或限频，仅保留快照、断线和异常发送日志为 `INFO/WARN`。 |
+
+本轮客户端提交：
+
+- `aca8a53 fix(main-world): 隔离旧连接的进场响应`
+- `c44614c fix(main-world): 重建重启后的移动时钟`
+- `ab56822 fix(main-world): 统一快照总线与 epoch`
+- `e53dd09 fix(main-world): 重连期间显示真实会话状态`
+- `1c89693 fix(main-world): 完善断线恢复与重进场流程`
+- `9d3ebd5 fix(main-world): 修复场景内断线恢复与视觉状态保持`
+
+本轮验证：`cargo fmt --check`、`git diff --check`、`cargo test --lib main_world_snapshot`（3 passed）、`cargo test --lib main_world_entry`（49 passed）、`cargo test --lib main_world_movement`（51 passed）、`cargo test --lib main_world_players`（30 passed）、`cargo test --lib game::screens::gameplay::host::tests`（48 passed）、`cargo test -p project recovery_connection_failure_retries_without_leaving_the_scene --lib`（1 passed）、`cargo test -p project explicit_transport_reconnect_replaces_an_old_connection --lib`（1 passed）、`cargo check`。构建和测试仍有仓库既有 unused/dead_code warnings，无失败。
+
+## 当前未处理项摘要
+
+1. 玩家蓝图/Prefab 缓存：缓存 RON 解析和 primitive set 编译结果，避免每个快照重复读盘和编译。
+2. `WorldSessionId` / `ConnectionEpoch` 类型收敛：统一现有 generation、attempt、connection 和 room membership 的跨模块身份边界；snapshot epoch 已完成，但更高层类型尚未统一。
+3. 服务端逐帧日志降噪：保留运行行为不变，仅调整 `broadcast_to_room`/`FRAME Bundle` 的日志级别或限频策略。
+4. 网络请求协议上下文完整透传和完整断线窗口覆盖：attempt、connection epoch、request seq、room epoch 以及 JoiningRoom/Recovering 二次断线等场景仍未全面统一或系统化覆盖；本 session 不继续深入。
+
+## 原始问题分析（历史快照，以进度表为准）
+
+以下内容记录本轮开始时的诊断结论；其中已经解决的项已在上方进度表标明，不能再视为当前实现状态。
+
+当前真实链路
+Lobby 点击主世界
+  → MainWorldEntryIntent::Enter
+  → EntryState.begin(generation++)
+  → JoinRequested
+  → MyServer JoinRoom
+  → RoomJoined / RoomStatePush / MovementSnapshotPush
+  → SceneCommand::Enter(world.main)
+  → Scene framework 建 root/camera，发 SceneEvent::Ready
+  → 主世界内容在 PostUpdate 再生成地形、标记、灯光
+  → SetReady(true)
+  → ReadyChanged
+  → AppUiMode::MainWorld
+  → Players 和 Movement 各自消费原始快照
+入口动作在 [lobby/host.rs (line 579)](H:/project/mybevy/project/src/game/screens/lobby/host.rs:579)，主状态机在 [main_world_entry.rs (line 600)](H:/project/mybevy/project/src/game/scenes/main_world_entry.rs:600)。
+目前并行存在六套状态：
+- AppUiMode
+- MainWorldEntryPhase
+- SceneRuntime
+- MyServerSession / GameConnectionState
+- MainWorldPlayerRuntime
+- MainWorldMovementRuntime
+它们没有一个统一的 WorldSessionId + ConnectionEpoch + AttemptId 串起来。
+P0：最需要先处理的问题
+1. 旧一轮请求可以推进新一轮进入（已完成，见上方 P0-1）
+generation 只存在于客户端入口和 SceneSessionId，转换为真实 JoinRoom 时被丢掉，[dispatch_main_world_join_requests (line 749)](H:/project/mybevy/project/src/game/scenes/main_world_entry.rs:749) 没有携带代际。
+网络层生成的 RoomJoined、ReadyChanged、RoomReconnected 没有 seq、connection epoch 或 entry generation。消费端只能按“当前 phase + 固定 room_id”判断，[consume_main_world_authority_events (line 767)](H:/project/mybevy/project/src/game/scenes/main_world_entry.rs:767)。
+实际时序可以是：
+gen1 JoinRoom 已发送
+→ 用户 Cancel
+→ state reset
+→ gen2 Enter
+→ gen1 RoomJoined / MovementSnapshot 到达
+→ 被当成 gen2 的响应
+更严重的是：
+- 非进场阶段 reader 直接 return，旧消息不会被消费；
+- 新一轮 Enter 先把 phase 改成 JoiningRoom，随后旧消息就能命中；
+- Movement snapshot 不要求 join_acknowledged，旧快照甚至可以在新 JoinRoom 发出前直接启动场景；
+- 同一帧 Enter + Cancel 时，旧的 JoinRequested 仍会被 dispatch；
+- Active 不属于 blocks_lobby_input，重复 Enter 也可能重新清空当前 scene session。
+这会造成真正的“僵尸房间”：UI 已经回 Lobby，但迟到的 Join 成功仍会让服务端把角色留在房间里。
+2. 重连没有等待新的权威快照（新快照 gate 和服务重启帧回退已完成；失败回滚仍待处理）
+掉线后 [begin_recovery (line 1197)](H:/project/mybevy/project/src/game/scenes/main_world_entry.rs:1197) 只把 snapshot_generation 清零，却保留：
+- 旧 authoritative_scene_id
+- 旧位置
+- 旧 scene session
+- 旧玩家缓存
+- 旧 ready 状态的一部分
+收到 RoomReconnected(ok=true) 后，[resume_after_reconnect_snapshot (line 1241)](H:/project/mybevy/project/src/game/scenes/main_world_entry.rs:1241) 只检查旧的 authoritative_scene_id 是否存在，就可能重新发送 SetReady。
+而协议里的 RoomReconnectRes.snapshot 和 movement_recovery 实际没有被主世界消费。结果是：
+断线
+→ 旧位置保留
+→ RoomReconnect 成功
+→ 没收到新快照
+→ Ready 成功
+→ Active
+角色可能拿旧位置继续移动，远端玩家列表也可能是掉线前的旧列表。
+另外，连接失败后的终态也不完整：
+- JoiningRoom 期间断线没有处理；
+- Recovering 再次断线没有处理；
+- RoomReconnectReq 失败没有统一失败分支；
+- Join、Ready、Reconnect 都没有客户端 deadline；
+- ReconnectFailed 可能与 connected=true/authenticated=true 同时存在；
+- fallback JoinRoom 成功后，GameConnectionState 仍可能不是 Authenticated，而移动发送 gate 明确要求它是 Authenticated，[main_world_movement.rs (line 1551)](H:/project/mybevy/project/src/game/scenes/main_world_movement.rs:1551)。
+这就是“画面恢复了，但人物永久不能移动”的来源。
+3. Failed / Cancel 没有统一回滚（待处理）
+state.fail() 主要只是改 phase 和冻结输入，[main_world_entry.rs (line 387)](H:/project/mybevy/project/src/game/scenes/main_world_entry.rs:387)，没有保证：
+- LeaveRoom
+- SceneCommand::Exit
+- 清理玩家 registry
+- 清理 movement runtime
+- 清理旧快照
+- 清理 pending request
+因此以下失败都可能留下外部副作用：
+- Scene load failure
+- 非法位置
+- RoomReady 失败
+- Ready request timeout
+- 环境/角色切换
+- 进场中取消
+退出流程也不是严格事务：LeaveRoom 和 Scene exit 同帧发出，收到 SceneExited 后就回 Lobby，并不等待 RoomLeft。快速重进时，新 Join 与旧 Leave 可以交叉。
+4. Scene Ready 的语义过早（待处理）
+framework 在 [lifecycle.rs (line 856)](H:/project/mybevy/project/src/framework/scene/lifecycle.rs:856) 中会在结构性 root/camera 建好后立即发 SceneEvent::Ready。
+但主世界真正的内容是在 [main_world.rs (line 449)](H:/project/mybevy/project/src/game/scenes/main_world.rs:449) 的 PostUpdate 中才生成：
+- 4000 米地形
+- 参照标记
+- 方向光
+- 相机渲染参数
+主世界内容生成失败目前只是 warn!，不会反向发 SceneFailure。于是入口可能已经：
+SceneEvent::Ready
+→ SetReady(true)
+→ Server ReadyChanged
+→ Active
+但地形还没生成，或生成失败。
+当前的 framework ready、主世界内容 ready、玩家初始快照 ready、房间 ready，实际上是四种不同语义，却被入口压缩成了两个布尔值。
+多 Player 移动同步的结构问题
+1. 三套 reader 各自解释同一条快照流
+Entry、Players、Movement 都直接读取 MyServerEvent：
+- Entry 负责决定是否能入场；
+- Players 负责实体注册/删除；
+- Movement 负责本地预测和远端插值。
+这导致同一条消息在不同模块里的含义不一样：
+- RoomStatePush / FrameBundlePush 被转换成普通 MovementSnapshotPush；
+- Players 根据合成 reason 把它当完整成员集；
+- Movement 又把它当 incremental movement；
+- 同帧的 full、recovery、incremental 没有统一优先级；
+- 各模块的 frame watermark 和 epoch reset 不一致。
+尤其是 Movement 已经检测到房间帧回退并清理自己的缓存，但 Players 仍保留旧 last_authoritative_frame，新房间低帧快照会被拒绝，导致新玩家不生成、离场玩家不删除。
+2. 完整快照和增量快照混用了同一类型
+main_world_contract.rs 把房间完整状态伪装成 MovementSnapshotPush，并用字符串 "frame_bundle_snapshot" 判断是否完整。
+风险包括：
+- 真实 movement 消息恰好使用同样 reason 时会误触发全量删除；
+- 迟到的旧完整快照可以删除刚加入的玩家；
+- 同帧消息后到者可能覆盖先到的更高优先级语义；
+- 完整快照内容不全时可能误删其他实体。
+应该拆成内部类型，例如：
+WorldSnapshot {
+    epoch,
+    frame,
+    source: Recovery | FullRoom | IncrementalMovement,
+    completeness,
+    entities
+}
+不要再依赖 wire reason 字符串。
+3. 远端掉线目前没有实时语义
+RoomMemberOfflinePush 已经能解码，但主世界没有消费者。
+因此远端玩家掉线后通常会：
+- 头像留在最后位置；
+- 没有离线标识；
+- 看起来只是停止移动；
+- 是否最终删除，取决于后续完整成员快照。
+这正是用户看到“人还在，但网络现实已经不在”的典型问题。
+4. 远端插值在网络停顿后不会主动追帧
+[advance_presentation_frame (line 443)](H:/project/mybevy/project/src/game/scenes/main_world_movement.rs:443) 以固定 20Hz 推进展示帧。
+当网络停顿后，展示帧追到旧目标；网络恢复时服务端最新帧又以接近 20Hz 增长，展示帧和目标帧可能同速前进，额外积累的延迟长期不收敛，只能等缓存淘汰或强制跳帧。
+需要增加自适应追帧策略：延迟小则插值，落后超过阈值则加速追赶或重建基线。
+5. 多人快照会重复读盘、解析和编译蓝图
+MainWorldPlayerRegistry::register 在判断已有实体之前，就执行：
+- 读取 RON；
+- 解析 blueprint；
+- compile primitive set。
+位置在 [main_world_players.rs (line 425)](H:/project/mybevy/project/src/game/scenes/main_world_players.rs:425)，底层读取是同步 fs::read_to_string。
+所以每个移动快照、每个玩家都会重复做资源解析，即使只是更新一个已有远端玩家的位置。这在移动端很容易变成多人移动抖动和主线程尖峰的来源。
+建议的目标时序
+我建议先把进场收敛成一个明确的事务：
+Idle
+  → BeginAttempt(attempt_id, connection_epoch, character_id)
+  → JoinSent
+  → JoinAccepted
+  → AwaitInitialSnapshot
+  → SnapshotCommitted
+  → SceneLoading
+  → SceneContentReady
+  → RoomReadySent
+  → Active(commit)
+Active 只能在以下条件全部成立时提交：
+当前 attempt
++ 当前 connection epoch
++ 当前 room membership epoch
++ 当前角色的 fresh snapshot
++ scene content ready
++ room ready ack
+恢复则是另一条明确链：
+Active
+  → Recovering（保留视觉、冻结输入）
+  → TransportReconnect
+  → Reauthenticate
+  → RoomReconnect / Rejoin
+  → AwaitFreshRecoverySnapshot
+  → 原子应用 entry + players + movement
+  → Scene/Room Ready
+  → Active
+失败和取消统一走：
+任何中间态
+  → Quiescing
+  → 冻结输入
+  → 取消/隔离 pending
+  → 对迟到 Join 做补偿 Leave
+  → SceneExit
+  → 清理 registry、movement、快照
+  → 给 Lobby 明确结果
+网络层至少需要透传：
+attempt_id
+connection_epoch
+request_seq
+room_epoch
+snapshot_epoch
+目前 MyServer 在 [plugin.rs (line 3325)](H:/project/mybevy/project/src/game/myserver/plugin.rs:3325) 解码成功响应时把 packet seq 丢掉，而 PendingRequest 只有 response type，没有 deadline，[types.rs (line 1237)](H:/project/mybevy/project/src/game/myserver/types.rs:1237)。
+需要先确定的产品语义
+我建议默认采用下面的语义，但这几项最好先确认：
+1. 短线时是否保留当前场景和远端头像？
+   我倾向于保留最后画面、冻结输入、显示“正在重连”遮罩；重试耗尽后回 Lobby。不可恢复鉴权错误再回 Login。
+2. 远端玩家掉线怎么显示？
+   我倾向于立即标记离线，保留几秒 grace period，之后删除实体；不要无限停在最后位置。
+3. Scene Ready 的标准是什么？
+   我倾向于必须包含“静态场景内容完成 + 本地角色初始权威快照已应用”，然后才发送 RoomReady。
+4. 重连成功但成员已过期时是否允许无感重新 Join？
+   我倾向于允许，但必须清空旧 room/frame/player/movement 基线，并把它视为一次新的 room epoch，不能沿用旧状态。
+现有主世界入口测试即使通过，也主要覆盖正常顺序；取消后重进、Recovering 再次失败、无 recovery snapshot 仍 Active、远端 offline、帧 epoch 回退等窗口都没有覆盖。
+当前下一步优先建立统一快照总线和显式 room/snapshot epoch；P0-3 回滚事务和 P0-4 场景内容 ready/failure 语义已完成，具体证据以上方进度表为准。
+
+## 功能点总结（截至 2026-08-21）
+
+### 已完成
+
+- P0-1 旧请求隔离：Join、Ready、Leave、Reconnect 等响应已绑定当前连接和进场上下文，旧连接响应不能推进新一轮进场。
+- P0-2 重连快照门禁：断线恢复必须重新鉴权、重新 Join/Start，并等待新的权威快照后才能恢复 Active。
+- P0-2b 服务重启后的移动时钟：检测到权威帧回退后重置预测、输入和移动基线，避免旧帧窗口阻塞移动。
+- P0-3 失败/取消统一回滚：失败和取消会冻结输入、退出场景、隔离迟到响应，并在必要时补偿 Leave，最终回到 Lobby。
+- P0-4 Scene Ready 与内容 Ready 分离：场景框架、主世界内容和初始权威快照全部满足后才发送 RoomReady；内容失败进入统一回滚。
+- 统一快照总线与 snapshot epoch：Entry、Players、Movement 使用 typed snapshot 和显式 epoch/completeness，处理完整快照、恢复快照和增量移动快照。
+- 远端玩家掉线清理：已验证 B 下线后 A 不再看到 B。
+- 远端插值追帧：已加入自适应追帧逻辑并通过对应回归测试。
+- 游戏列表重新进入主世界：账号仍有效但游戏连接断开时，自动重新进行游戏鉴权后再进入房间，不应误跳登录页。
+
+### 已实现并完成本轮实机验收
+
+- 主世界 authority 帧 watchdog：连续约 5 秒没有新权威帧时触发恢复；实机确认服务端重启后可恢复并持续收到 authority frame。
+- watchdog 正常网络保护：实机确认正常持续收帧时不会误触发恢复。
+- 恢复失败路由：实机确认超时后只返回 Lobby，不跳转 Login，并可从游戏列表重新进入主世界。
+- 重连期间状态与画面保持：`9d3ebd5` 修复旧 KCP 半开连接替换、恢复重试及 HUD/摄像机保持；实机恢复路径已通过。
+
+### 未完成
+
+- 玩家蓝图/Prefab 缓存：尚未缓存 RON 读取、解析和 primitive set 编译结果，多人移动快照仍可能重复处理资源。
+- `WorldSessionId` / `ConnectionEpoch` 类型收敛：snapshot epoch 已完成，但 generation、attempt、connection 和 room membership 仍未统一为跨模块类型。
+- 服务端逐帧日志降噪：`broadcast_to_room` 和 `FRAME Bundle` 的逐帧 INFO 日志尚未降为 DEBUG/TRACE 或限频。
+- 网络请求协议上下文完整透传：attempt、connection epoch、request seq、room epoch 等字段尚未在 MyServer 请求响应链路全面统一。
+- 完整断线窗口回归：JoiningRoom、Recovering 二次断线、无恢复快照、远端 offline grace period 等场景仍缺少系统化实机和自动化覆盖。

@@ -1,0 +1,10 @@
+{
+  "schema_version": "fangyuan-generation-promotion-decision/v1",
+  "canonical_sha256": "0e0c715488e2541a9d26540a25a24074cd6bb79f0c14c468a6a175c7ef899c47",
+  "catalog_context_sha256": "9dad52ad92b6dc415d6a246beecd5434856e931ccacb71652e0f6f0b5a6c104e",
+  "audit_sha256": "b5aa5691351eab7e698a3bfc3e55448d53aedce5528103d30b29013beead5639",
+  "target_relative_path": "project/assets/fangyuan/blueprints/generated/stage1_contract_fixture.ron",
+  "expected_target_sha256": null,
+  "status": "ready_for_promotion",
+  "warning_policy": "warnings_allowed_when_error_count_is_zero"
+}
