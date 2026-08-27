@@ -3264,6 +3264,11 @@ mod tests {
         });
         app.update();
 
+        assert!(
+            read_messages::<UiButtonEvent>(&app)
+                .iter()
+                .any(|event| event.entity == debug_button && event.kind == UiButtonEventKind::Click)
+        );
         assert!(app.world().resource::<FangyuanDebugPanelState>().visible);
         assert_eq!(
             fangyuan_home_binding_value(&app, "fangyuan_home.debug.visibility"),
@@ -3297,6 +3302,64 @@ mod tests {
             value => panic!("unexpected debug text binding value: {value:?}"),
         };
         assert!(debug_text.contains("current=normal"), "{debug_text}");
+    }
+
+    #[test]
+    fn mounted_fangyuan_home_pointer_click_bubbles_into_ui_button_event() {
+        use bevy::picking::{
+            events::{Click, Pointer},
+            pointer::{Location, PointerButton, PointerId},
+        };
+        use std::time::Duration;
+
+        let mut app = fangyuan_home_pointer_runtime_app();
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::FangyuanHome);
+        update_frames(&mut app, 6);
+
+        let document_id = UiDocumentId::from_str(FANGYUAN_HOME_DOCUMENT_ID).unwrap();
+        let runtime = app.world().resource::<UiDocumentRuntime>();
+        let instance = runtime
+            .active_instance(OWNER_FANGYUAN_HOME.as_str(), &document_id)
+            .expect("Fangyuan Home HUD should be mounted");
+        let debug_button = runtime
+            .node_entity(instance, &UiNodeId::from_str(HOME_DEBUG_NODE).unwrap())
+            .expect("mounted Debug button should be indexed");
+        let debug_label = app
+            .world()
+            .get::<Children>(debug_button)
+            .and_then(|children| children.iter().next())
+            .expect("mounted Debug button should have a label child");
+
+        app.world_mut().write_message(Pointer::new(
+            PointerId::Mouse,
+            Location {
+                target: bevy::camera::NormalizedRenderTarget::None {
+                    width: 1,
+                    height: 1,
+                },
+                position: Vec2::ZERO,
+            },
+            Click {
+                button: PointerButton::Primary,
+                hit: bevy::picking::backend::HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+                duration: Duration::ZERO,
+            },
+            debug_label,
+        ));
+        app.update();
+
+        assert!(
+            read_messages::<UiButtonEvent>(&app)
+                .iter()
+                .any(|event| event.entity == debug_button && event.kind == UiButtonEventKind::Click)
+        );
+        assert!(app.world().resource::<FangyuanDebugPanelState>().visible);
+        assert_eq!(
+            fangyuan_home_binding_value(&app, "fangyuan_home.debug.visibility"),
+            UiBindingValue::Enum("flex".to_owned())
+        );
     }
 
     #[test]
@@ -5186,6 +5249,15 @@ mod tests {
                 super::super::fangyuan_home::update_fangyuan_home_debug_panel
                     .after(handle_gameplay_hud_document_actions),
             );
+        app
+    }
+
+    fn fangyuan_home_pointer_runtime_app() -> App {
+        let mut app = fangyuan_home_mounted_runtime_app();
+        app.add_plugins((
+            bevy::picking::InteractionPlugin,
+            crate::framework::ui::widgets::UiWidgetsPlugin,
+        ));
         app
     }
 
