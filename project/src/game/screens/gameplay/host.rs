@@ -5219,6 +5219,7 @@ mod tests {
         let mut app = main_world_hud_runtime_app();
         app.init_resource::<FangyuanDebugPanelState>()
             .init_resource::<FangyuanAtlasGalleryState>()
+            .init_resource::<super::super::robot_sync_scene::RobotSyncHudVisibility>()
             .init_resource::<FangyuanHomeBlueprintStats>()
             .add_message::<FangyuanHomeBlueprintCommand>()
             .add_message::<SceneCommand>()
