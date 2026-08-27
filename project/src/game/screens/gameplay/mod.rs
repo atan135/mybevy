@@ -50,7 +50,9 @@ impl Plugin for GameplayScreensPlugin {
         )
         .add_systems(
             Update,
-            host::handle_gameplay_hud_document_actions.after(UiDocumentRuntimeSystems::Reconcile),
+            host::handle_gameplay_hud_document_actions
+                .after(UiDocumentRuntimeSystems::Reconcile)
+                .before(UiBindingSystems::Apply),
         )
         .add_systems(
             Update,
@@ -97,6 +99,7 @@ impl Plugin for GameplayScreensPlugin {
                 fangyuan_home::route_to_lobby_on_fangyuan_home_exit,
             )
                 .chain()
+                .after(host::handle_gameplay_hud_document_actions)
                 .before(UiBindingSystems::Apply)
                 .run_if(in_state(AppUiMode::FangyuanHome)),
         );

@@ -2745,6 +2745,7 @@ mod tests {
         },
     };
     use crate::game::myserver::mail::MailClaimWorkflowState;
+    use crate::game::scenes::FangyuanHomeBlueprintStats;
     use bevy::{
         ecs::message::{MessageCursor, Messages},
         picking::Pickable,
@@ -3200,6 +3201,43 @@ mod tests {
         ));
         app.update();
         assert_eq!(*app.world().resource::<FangyuanAtlasGalleryState>(), before);
+    }
+
+    #[test]
+    fn fangyuan_home_actions_refresh_visible_debug_bindings() {
+        let mut app = fangyuan_home_binding_test_app();
+
+        app.world_mut().write_message(dispatch(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_TOGGLE_DEBUG,
+            HOME_DEBUG_NODE,
+            BTreeMap::new(),
+        ));
+        app.update();
+
+        assert_eq!(
+            fangyuan_home_binding_value(&app, "fangyuan_home.debug.visibility"),
+            UiBindingValue::Enum("flex".to_owned())
+        );
+
+        app.world_mut().write_message(dispatch(
+            FANGYUAN_HOME_DOCUMENT_ID,
+            OWNER_FANGYUAN_HOME.as_str(),
+            ACTION_FANGYUAN_HOME_GALLERY_SET_CHANNEL,
+            HOME_GALLERY_CHANNEL_SOURCES[2].0,
+            BTreeMap::from([(
+                "channel".to_owned(),
+                UiActionValue::Enum("normal".to_owned()),
+            )]),
+        ));
+        app.update();
+
+        let debug_text = match fangyuan_home_binding_value(&app, "fangyuan_home.debug.text") {
+            UiBindingValue::String(value) => value,
+            value => panic!("unexpected debug text binding value: {value:?}"),
+        };
+        assert!(debug_text.contains("current=normal"), "{debug_text}");
     }
 
     #[test]
@@ -5050,6 +5088,40 @@ mod tests {
             .insert_resource(UiI18n::test_with_texts("en_us", &[]))
             .add_systems(Update, sync_main_world_hud_bindings);
         app
+    }
+
+    fn fangyuan_home_binding_test_app() -> App {
+        let mut app = action_test_app();
+        app.init_resource::<GameplayHudHostContract>()
+            .init_resource::<UiBindingValues>()
+            .init_resource::<UiViewport>()
+            .init_resource::<FangyuanHomeBlueprintStats>()
+            .insert_resource(UiI18n::test_with_texts("en_us", &[]))
+            .add_systems(
+                Update,
+                super::super::fangyuan_home::update_fangyuan_home_debug_panel
+                    .after(handle_gameplay_hud_document_actions),
+            );
+        app
+    }
+
+    fn fangyuan_home_binding_value(app: &App, path: &str) -> UiBindingValue {
+        let path = UiBindingPath::from_str(path).unwrap();
+        let contract = app.world().resource::<GameplayHudHostContract>();
+        let declaration = contract
+            .bindings
+            .get(FANGYUAN_HOME_DOCUMENT_ID)
+            .and_then(|bindings| bindings.get(&path))
+            .unwrap();
+        app.world()
+            .resource::<UiBindingValues>()
+            .scoped_value(
+                FANGYUAN_HOME_DOCUMENT_ID,
+                OWNER_FANGYUAN_HOME.as_str(),
+                &path,
+                declaration,
+            )
+            .unwrap()
     }
 
     fn main_world_binding_value(app: &App, path: &str) -> UiBindingValue {
