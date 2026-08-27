@@ -3241,6 +3241,65 @@ mod tests {
     }
 
     #[test]
+    fn mounted_fangyuan_home_buttons_dispatch_to_host_and_refresh_bindings() {
+        let mut app = fangyuan_home_mounted_runtime_app();
+        app.world_mut()
+            .resource_mut::<NextState<AppUiMode>>()
+            .set(AppUiMode::FangyuanHome);
+        update_frames(&mut app, 6);
+
+        let document_id = UiDocumentId::from_str(FANGYUAN_HOME_DOCUMENT_ID).unwrap();
+        let runtime = app.world().resource::<UiDocumentRuntime>();
+        let instance = runtime
+            .active_instance(OWNER_FANGYUAN_HOME.as_str(), &document_id)
+            .expect("Fangyuan Home HUD should be mounted");
+        let debug_button = runtime
+            .node_entity(instance, &UiNodeId::from_str(HOME_DEBUG_NODE).unwrap())
+            .expect("mounted Debug button should be indexed");
+
+        app.world_mut().write_message(UiButtonEvent {
+            entity: debug_button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+
+        assert!(app.world().resource::<FangyuanDebugPanelState>().visible);
+        assert_eq!(
+            fangyuan_home_binding_value(&app, "fangyuan_home.debug.visibility"),
+            UiBindingValue::Enum("flex".to_owned())
+        );
+
+        // The display binding is applied by the document reconcile pass on the
+        // following frame; only then can the channel controls receive a pointer.
+        app.update();
+        let channel_button = app
+            .world()
+            .resource::<UiDocumentRuntime>()
+            .node_entity(
+                instance,
+                &UiNodeId::from_str("fangyuan_home.channel_normal").unwrap(),
+            )
+            .expect("mounted Normal channel button should be indexed");
+        app.world_mut().write_message(UiButtonEvent {
+            entity: channel_button,
+            kind: UiButtonEventKind::Click,
+            button: None,
+        });
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<FangyuanAtlasGalleryState>().channel,
+            FangyuanAtlasGalleryChannel::Normal
+        );
+        let debug_text = match fangyuan_home_binding_value(&app, "fangyuan_home.debug.text") {
+            UiBindingValue::String(value) => value,
+            value => panic!("unexpected debug text binding value: {value:?}"),
+        };
+        assert!(debug_text.contains("current=normal"), "{debug_text}");
+    }
+
+    #[test]
     fn active_main_world_mail_open_uses_only_the_host_and_mail_adapters() {
         let mut app = action_test_app();
         app.world_mut()
@@ -5097,6 +5156,31 @@ mod tests {
             .init_resource::<UiViewport>()
             .init_resource::<FangyuanHomeBlueprintStats>()
             .insert_resource(UiI18n::test_with_texts("en_us", &[]))
+            .add_systems(
+                Update,
+                super::super::fangyuan_home::update_fangyuan_home_debug_panel
+                    .after(handle_gameplay_hud_document_actions),
+            );
+        app
+    }
+
+    fn fangyuan_home_mounted_runtime_app() -> App {
+        let mut app = main_world_hud_runtime_app();
+        app.init_resource::<FangyuanDebugPanelState>()
+            .init_resource::<FangyuanAtlasGalleryState>()
+            .init_resource::<FangyuanHomeBlueprintStats>()
+            .add_message::<FangyuanHomeBlueprintCommand>()
+            .add_message::<SceneCommand>()
+            .add_message::<GameRouteCommand>()
+            .add_message::<DeclarativeScreenHostCommand>()
+            .add_message::<MailClientCommand>()
+            .add_message::<ActivityScreenCommand>()
+            .add_message::<NetworkCommand>()
+            .add_message::<MainWorldEntryIntent>()
+            .add_systems(
+                Update,
+                handle_gameplay_hud_document_actions.after(UiDocumentRuntimeSystems::Reconcile),
+            )
             .add_systems(
                 Update,
                 super::super::fangyuan_home::update_fangyuan_home_debug_panel
