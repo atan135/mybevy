@@ -5,6 +5,7 @@ pub mod document;
 pub(crate) mod i18n;
 pub(crate) mod overlays;
 pub(crate) mod prelude;
+pub(crate) mod preview3d;
 pub(crate) mod style;
 pub(crate) mod visual;
 pub(crate) mod widgets;

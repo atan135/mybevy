@@ -11,6 +11,7 @@ use crate::framework::ui::{
     document::{UiDocumentPreviewPlugin, UiDocumentRuntimePlugin, UiUpdateClientPlugin},
     i18n::UiI18nPlugin,
     overlays::UiOverlayPlugin,
+    preview3d::Preview3dViewportPlugin,
     style::{UiFontPlugin, UiThemePlugin},
     widgets::UiWidgetsPlugin,
 };
@@ -40,6 +41,7 @@ impl Plugin for UiFrameworkPlugin {
             UiDocumentRuntimePlugin,
             UiDocumentPreviewPlugin,
             UiUpdateClientPlugin,
+            Preview3dViewportPlugin,
         ));
     }
 }
