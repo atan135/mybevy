@@ -9,3 +9,5 @@ impl Plugin for Preview3dViewportPlugin {
         // Systems, components, and resources will be added in stages 2-7.
     }
 }
+
+mod config;
