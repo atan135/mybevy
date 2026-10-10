@@ -2,7 +2,7 @@
 // All types below will be fleshed out in stages 2–7; this file is the only
 // place touched in this stage.
 
-use bevy::{camera::visibility::RenderLayers, prelude::*, ui::UiRect};
+use bevy::{prelude::*, ui::UiRect};
 use std::fmt;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,14 +38,13 @@ pub enum PreviewPixelScale {
 }
 
 impl PreviewPixelScale {
-    /// Returns the device-scale multiplier for [Logical] and [DeviceScale].
-    /// Returns 1.0 for [FixedPhysical] because physical dimensions are
-    /// already absolute; callers use logical_size only for aspect ratio.
-    pub fn device_scale(&self, _logical_size: Vec2) -> f32 {
-        match self {
-            PreviewPixelScale::Logical => 1.0,
-            PreviewPixelScale::DeviceScale(s) => *s,
-            PreviewPixelScale::FixedPhysical { .. } => 1.0,
+    /// Convert logical UI size to GPU texture size.
+    /// [FixedPhysical] uses the explicit pixel size and ignores `logical_size`.
+    pub fn physical_size(&self, logical_size: Vec2) -> UVec2 {
+        match *self {
+            PreviewPixelScale::Logical => scaled_physical_size(logical_size, 1.0),
+            PreviewPixelScale::DeviceScale(scale) => scaled_physical_size(logical_size, scale),
+            PreviewPixelScale::FixedPhysical { width, height } => UVec2::new(width, height),
         }
     }
 
@@ -56,6 +55,18 @@ impl PreviewPixelScale {
             PreviewPixelScale::FixedPhysical { width, height } => *width > 0 && *height > 0,
         }
     }
+}
+
+fn scaled_physical_size(logical_size: Vec2, device_scale: f32) -> UVec2 {
+    let (width, height) = if !device_scale.is_finite() || device_scale <= 0.0 {
+        (logical_size.x.ceil(), logical_size.y.ceil())
+    } else {
+        (
+            (logical_size.x * device_scale).ceil(),
+            (logical_size.y * device_scale).ceil(),
+        )
+    };
+    UVec2::new(width.max(1.0) as u32, height.max(1.0) as u32)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,10 +89,10 @@ pub struct PreviewStyle {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Configuration for the embedded 3D projection camera.
+///
+/// RenderLayers are assigned by `Preview3dLayerAllocator` at spawn time.
 #[derive(Clone, Debug)]
 pub struct PreviewCameraConfig {
-    /// RenderLayers this camera writes to. Must contain at least one layer.
-    pub layer: RenderLayers,
     /// Projection type (perspective or orthographic).
     pub projection: Projection,
     /// Initial world-space transform of the camera.
@@ -117,11 +128,9 @@ pub type PreviewContentSpawner = Box<
 /// Source of 3D content for a preview viewport.
 ///
 /// This type intentionally does NOT implement Clone because the Spawn
-/// variant wraps a dyn FnOnce which cannot be cloned. Call sites that need
-/// to duplicate a config should construct a fresh Preview3dConfig value
-/// rather than cloning.
+/// variant wraps a dyn FnOnce which cannot be cloned.
 pub enum PreviewContent {
-    /// No 3D content is present yet; call dd_preview3d_content later.
+    /// No 3D content is present yet; call `add_preview3d_content` later.
     None,
     /// Tag existing entities (already in the world) with the viewport's
     /// RenderLayers so they become visible to the preview camera.
@@ -165,35 +174,6 @@ pub struct Preview3dConfig {
     pub pixel_scale: PreviewPixelScale,
 }
 
-/// Preview3dConfig does not derive Clone because its content field
-/// contains a PreviewContent enum whose Spawn variant holds a dyn FnOnce
-/// that cannot be cloned. Call sites that need to duplicate a config should
-/// construct a fresh Preview3dConfig value rather than cloning.
-impl Clone for Preview3dConfig {
-    fn clone(&self) -> Self {
-        // TagEntities can be cloned; None and Spawn cannot.
-        // Panic if non-cloneable variants are used.
-        let content = match &self.content {
-            PreviewContent::None => PreviewContent::None,
-            PreviewContent::TagEntities(entities) => {
-                // Vec<Entity> is Clone
-                PreviewContent::TagEntities(entities.clone())
-            }
-            PreviewContent::Spawn(_) => {
-                panic!("Preview3dConfig cannot be cloned when content is Spawn")
-            }
-        };
-        Preview3dConfig {
-            logical_size: self.logical_size,
-            camera: self.camera.clone(),
-            content,
-            fit: self.fit,
-            style: self.style.clone(),
-            pixel_scale: self.pixel_scale,
-        }
-    }
-}
-
 impl Preview3dConfig {
     /// Validate the entire config. Returns Ok(()) if all fields are valid,
     /// otherwise returns the first error encountered.
@@ -204,11 +184,6 @@ impl Preview3dConfig {
         }
         if !self.logical_size.is_finite() {
             return Err(PreviewConfigError::NonFiniteSize(self.logical_size));
-        }
-
-        // camera.layer — must contain at least one layer bit
-        if self.camera.layer == RenderLayers::none() {
-            return Err(PreviewConfigError::EmptyLayer);
         }
 
         // camera.field_of_view
@@ -245,8 +220,6 @@ pub enum PreviewConfigError {
     NonPositiveSize(Vec2),
     /// logical_size contains non-finite (NaN / Inf) components.
     NonFiniteSize(Vec2),
-    /// camera.layer has no bits set.
-    EmptyLayer,
     /// camera.field_of_view is outside the range (0, π).
     InvalidFieldOfView(f32),
     /// style.corner_radius is negative or non-finite.
@@ -264,7 +237,6 @@ impl fmt::Display for PreviewConfigError {
             Self::NonFiniteSize(s) => {
                 write!(f, "logical_size must be finite, got ({}, {})", s.x, s.y)
             }
-            Self::EmptyLayer => write!(f, "camera.layer must contain at least one layer bit"),
             Self::InvalidFieldOfView(fov) => {
                 write!(f, "field_of_view must be in (0, π), got {}", fov)
             }
@@ -292,7 +264,6 @@ mod tests {
         Preview3dConfig {
             logical_size: Vec2::new(360.0, 480.0),
             camera: PreviewCameraConfig {
-                layer: RenderLayers::layer(24),
                 projection: Projection::Perspective(PerspectiveProjection {
                     fov: 35.0_f32.to_radians(),
                     ..Default::default()
@@ -355,14 +326,6 @@ mod tests {
         cfg.logical_size.y = f32::INFINITY;
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, PreviewConfigError::NonFiniteSize(_)));
-    }
-
-    #[test]
-    fn empty_layer_fails() {
-        let mut cfg = valid_config();
-        cfg.camera.layer = RenderLayers::none();
-        let err = cfg.validate().unwrap_err();
-        assert!(matches!(err, PreviewConfigError::EmptyLayer));
     }
 
     #[test]
@@ -441,53 +404,5 @@ mod tests {
         let s = err.to_string();
         assert!(s.contains("0"));
         assert!(s.contains("100"));
-    }
-
-    #[test]
-    fn config_with_tag_entities_can_be_cloned() {
-        let cfg = Preview3dConfig {
-            logical_size: Vec2::new(100.0, 100.0),
-            camera: PreviewCameraConfig {
-                layer: RenderLayers::layer(24),
-                projection: Projection::Perspective(Default::default()),
-                initial_transform: Default::default(),
-                clear_color: Color::NONE,
-                field_of_view: None,
-            },
-            content: PreviewContent::TagEntities(vec![]),
-            fit: PreviewFit::Stretch,
-            style: PreviewStyle {
-                corner_radius: 0.0,
-                background: None,
-                border: None,
-            },
-            pixel_scale: PreviewPixelScale::Logical,
-        };
-        // TagEntities variant should not panic on clone
-        let _cloned = cfg.clone();
-    }
-
-    #[test]
-    fn config_with_spawn_panics_on_clone() {
-        let cfg = Preview3dConfig {
-            logical_size: Vec2::new(100.0, 100.0),
-            camera: PreviewCameraConfig {
-                layer: RenderLayers::layer(24),
-                projection: Projection::Perspective(Default::default()),
-                initial_transform: Default::default(),
-                clear_color: Color::NONE,
-                field_of_view: None,
-            },
-            content: PreviewContent::Spawn(Box::new(|_, _, _, _| {})),
-            fit: PreviewFit::Stretch,
-            style: PreviewStyle {
-                corner_radius: 0.0,
-                background: None,
-                border: None,
-            },
-            pixel_scale: PreviewPixelScale::Logical,
-        };
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cfg.clone()));
-        assert!(result.is_err());
     }
 }

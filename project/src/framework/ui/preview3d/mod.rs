@@ -1,4 +1,4 @@
-// preview3d module – Stage 1 skeleton only. All types below will be replaced in later stages.
+// preview3d module - Stage 1 skeleton only. All types below will be replaced in later stages.
 use bevy::prelude::*;
 
 pub struct Preview3dViewportPlugin;
@@ -10,5 +10,6 @@ impl Plugin for Preview3dViewportPlugin {
     }
 }
 
+mod camera;
 mod config;
 mod target;

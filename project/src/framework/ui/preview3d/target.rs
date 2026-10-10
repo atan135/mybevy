@@ -136,8 +136,7 @@ pub fn create_preview_image(
     logical_size: Vec2,
     pixel_scale: PreviewPixelScale,
 ) -> PreviewImageEntry {
-    let device_scale = pixel_scale.device_scale(logical_size);
-    let physical_size = compute_physical_size(logical_size, device_scale);
+    let physical_size = pixel_scale.physical_size(logical_size);
 
     let image = Image::new_target_texture(
         physical_size.x,
@@ -164,8 +163,7 @@ pub fn resize_preview_image(
     new_logical_size: Vec2,
     pixel_scale: PreviewPixelScale,
 ) -> PreviewImageEntry {
-    let device_scale = pixel_scale.device_scale(new_logical_size);
-    let new_physical = compute_physical_size(new_logical_size, device_scale);
+    let new_physical = pixel_scale.physical_size(new_logical_size);
 
     // Release the old GPU texture
     images.remove(&current.handle);
