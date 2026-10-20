@@ -330,7 +330,7 @@ pub(super) fn apply_ui_document_gallery_component_audit_state(
                 anchor: entity,
                 meta: *meta,
                 owner: owner
-                    .map(|owner| owner.0)
+                    .and_then(UiControlOwner::explicit_owner)
                     .or(Some(OWNER_UI_DOCUMENT_GALLERY)),
                 dropdown: dropdown.clone(),
             },
@@ -830,7 +830,7 @@ mod tests {
             .spawn((
                 UiDropdown::new("Choose", vec![UiDropdownOption::new("one", "One")], None),
                 UiControlMeta::new(UiControlId::new("gallery.select"), UiControlKind::Dropdown),
-                UiControlOwner(OWNER_UI_DOCUMENT_GALLERY),
+                UiControlOwner::Explicit(OWNER_UI_DOCUMENT_GALLERY),
                 DocumentGalleryAuditDropdown,
             ))
             .id();
@@ -857,7 +857,7 @@ mod tests {
         app.world_mut().spawn((
             UiDropdown::new("Choose", vec![UiDropdownOption::new("one", "One")], None),
             UiControlMeta::new(UiControlId::new("gallery.select"), UiControlKind::Dropdown),
-            UiControlOwner(OWNER_UI_DOCUMENT_GALLERY),
+            UiControlOwner::Explicit(OWNER_UI_DOCUMENT_GALLERY),
             DocumentGalleryAuditDropdown,
         ));
         app.world_mut().spawn(UiPanelRoot {

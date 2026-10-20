@@ -42,9 +42,9 @@ use crate::framework::ui::{
         DisabledButton, DisabledTextInput, FocusableButton, FocusedButton, LoadingButton,
         ReadonlyTextInput, SelectedButton, UiAdvancedImageSource, UiAdvancedImageSpec, UiBadge,
         UiButtonEvent, UiButtonEventKind, UiControlEvent, UiControlEventKind, UiControlFlags,
-        UiControlId, UiControlKind, UiControlMeta, UiControlState, UiControlValue, UiDropdown,
-        UiDropdownOption, UiImagePixelSize, UiImageSize, UiImageTextureSource, UiProgress,
-        UiScrollViewConfig, UiSensitiveTextInput, UiSlider, UiStepper, UiTextInput,
+        UiControlId, UiControlKind, UiControlMeta, UiControlOwner, UiControlState, UiControlValue,
+        UiDropdown, UiDropdownOption, UiImagePixelSize, UiImageSize, UiImageTextureSource,
+        UiProgress, UiScrollViewConfig, UiSensitiveTextInput, UiSlider, UiStepper, UiTextInput,
         UiTextInputError, UiTextInputMaxChars, UiTextInputSubmitted, UiTextInputValue, UiTooltip,
         UiTooltipTone,
         controls::{
@@ -1720,6 +1720,14 @@ fn spawn_prepared_node(
             control.kind,
         ));
         apply_control_state(world, entity, control);
+        // Floating documents retain the underlying page's current owner.
+        // Resolve generated control events through their document marker rather
+        // than labelling them with that unrelated page owner. Include internal
+        // controls such as segmented options.
+        world.entity_mut(entity).insert(UiControlOwner::Document);
+        for child in find_internal_descendants_with::<UiControlMeta>(world, entity) {
+            world.entity_mut(child).insert(UiControlOwner::Document);
+        }
     }
 
     if let Some(repeat) = prepared.source.repeat() {
@@ -4918,6 +4926,25 @@ fn apply_document_bound_control_flags(
     }
     if let Some(selected) = selected {
         flags.selected = selected;
+        // Selection widgets also read their type-specific marker when handling
+        // the next click. Keep it aligned with host bindings after a reopen.
+        use crate::framework::ui::widgets::controls::{
+            UiCheckbox, UiCheckboxChecked, UiToggle, UiToggleOn,
+        };
+        if world.get::<UiCheckbox>(entity).is_some() {
+            if selected {
+                world.entity_mut(entity).insert(UiCheckboxChecked);
+            } else {
+                world.entity_mut(entity).remove::<UiCheckboxChecked>();
+            }
+        }
+        if world.get::<UiToggle>(entity).is_some() {
+            if selected {
+                world.entity_mut(entity).insert(UiToggleOn);
+            } else {
+                world.entity_mut(entity).remove::<UiToggleOn>();
+            }
+        }
     }
     let is_text_input = world.get::<UiTextInput>(entity).is_some();
     let has_disabled = world.get::<DisabledButton>(entity).is_some();
@@ -8796,6 +8823,9 @@ mod tests {
                 )
                     .before(UiDocumentRuntimeSystems::Reconcile),
             );
+        // A floating document has a different owner from its underlying page.
+        app.world_mut().resource_mut::<UiCurrentOwner>().owner =
+            Some(UiOwnerId::new("underlying_page"));
         register_route_action(&mut app);
         let control_image = test_image_handle(&mut app, 1, 1);
         app.world_mut()

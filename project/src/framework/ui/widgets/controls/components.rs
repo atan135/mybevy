@@ -172,7 +172,21 @@ impl UiControlMeta {
 }
 
 #[derive(Clone, Copy, Debug, Component)]
-pub(crate) struct UiControlOwner(pub UiOwnerId);
+pub(crate) enum UiControlOwner {
+    Explicit(UiOwnerId),
+    /// The document runtime resolves ownership from the source entity and its
+    /// live document instance, whose owner can be a dynamic string.
+    Document,
+}
+
+impl UiControlOwner {
+    pub(crate) fn explicit_owner(&self) -> Option<UiOwnerId> {
+        match self {
+            Self::Explicit(owner) => Some(*owner),
+            Self::Document => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum UiControlValue {
@@ -902,7 +916,11 @@ pub(crate) fn event_owner(
     owner: Option<&UiControlOwner>,
     current_owner: &UiCurrentOwner,
 ) -> Option<UiOwnerId> {
-    owner.map(|owner| owner.0).or(current_owner.owner)
+    match owner {
+        Some(UiControlOwner::Explicit(owner)) => Some(*owner),
+        Some(UiControlOwner::Document) => None,
+        None => current_owner.owner,
+    }
 }
 
 fn badge_node(theme: &UiTheme) -> Node {

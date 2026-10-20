@@ -1637,7 +1637,9 @@ pub(super) fn apply_gallery_component_audit_state(
                     UiDropdownPanel {
                         anchor: entity,
                         meta: *meta,
-                        owner: owner.map(|owner| owner.0).or(Some(OWNER_UI_GALLERY)),
+                        owner: owner
+                            .and_then(UiControlOwner::explicit_owner)
+                            .or(Some(OWNER_UI_GALLERY)),
                         dropdown: dropdown.clone(),
                     },
                 )));
@@ -2794,7 +2796,7 @@ fn spawn_gallery_component_samples(
             ] {
                 badges.spawn((
                     badge_key(theme, fonts, i18n, key, fallback, state),
-                    UiControlOwner(OWNER_UI_GALLERY),
+                    UiControlOwner::Explicit(OWNER_UI_GALLERY),
                     Name::new(format!("Gallery Badge {fallback}")),
                 ));
             }
@@ -2848,7 +2850,7 @@ fn spawn_gallery_component_samples(
             ] {
                 progress.spawn((
                     progress_key(theme, fonts, i18n, key, fallback, value, state),
-                    UiControlOwner(OWNER_UI_GALLERY),
+                    UiControlOwner::Explicit(OWNER_UI_GALLERY),
                     Name::new(format!("Gallery Progress {fallback}")),
                 ));
             }
@@ -2901,7 +2903,7 @@ fn spawn_gallery_component_samples(
         ] {
             tabs.spawn((
                 tab_key(theme, fonts, i18n, fallback, key, fallback, state),
-                UiControlOwner(OWNER_UI_GALLERY),
+                UiControlOwner::Explicit(OWNER_UI_GALLERY),
                 GalleryControlStatePreview(state),
                 Name::new(format!("Gallery Tab {fallback}")),
             ));
@@ -2994,7 +2996,7 @@ fn spawn_gallery_component_samples(
                         selected,
                         state,
                     ),
-                    UiControlOwner(OWNER_UI_GALLERY),
+                    UiControlOwner::Explicit(OWNER_UI_GALLERY),
                     Name::new(format!("Gallery Dropdown {fallback}")),
                 ));
                 if index == 0 {
@@ -3040,7 +3042,7 @@ fn spawn_gallery_component_samples(
                     ),
                     UiTooltipTone::Standard,
                 ),
-                UiControlOwner(OWNER_UI_GALLERY),
+                UiControlOwner::Explicit(OWNER_UI_GALLERY),
                 GalleryAuditTooltip,
             ));
             tooltips.spawn((
@@ -3060,7 +3062,7 @@ fn spawn_gallery_component_samples(
                     ),
                     UiTooltipTone::Error,
                 ),
-                UiControlOwner(OWNER_UI_GALLERY),
+                UiControlOwner::Explicit(OWNER_UI_GALLERY),
             ));
             tooltips.spawn((
                 disabled_secondary_action_button_key(
@@ -3079,7 +3081,7 @@ fn spawn_gallery_component_samples(
                     ),
                     UiTooltipTone::Standard,
                 ),
-                UiControlOwner(OWNER_UI_GALLERY),
+                UiControlOwner::Explicit(OWNER_UI_GALLERY),
             ));
         });
 
@@ -3193,7 +3195,7 @@ fn spawn_gallery_selection_state_matrix(
                             )),
                         };
                         option.insert((
-                            UiControlOwner(OWNER_UI_GALLERY),
+                            UiControlOwner::Explicit(OWNER_UI_GALLERY),
                             GalleryControlStatePreview(state),
                         ));
                         if state == UiControlState::Loading {
@@ -3232,7 +3234,7 @@ fn spawn_gallery_checkbox_state(
         _ => parent.spawn(checkbox_key(theme, fonts, i18n, key, fallback)),
     };
     entity.insert((
-        UiControlOwner(OWNER_UI_GALLERY),
+        UiControlOwner::Explicit(OWNER_UI_GALLERY),
         GalleryControlStatePreview(state),
     ));
     if state == UiControlState::Loading {
@@ -3266,7 +3268,7 @@ fn spawn_gallery_toggle_state(
         _ => parent.spawn(toggle_key(theme, fonts, i18n, key, fallback)),
     };
     entity.insert((
-        UiControlOwner(OWNER_UI_GALLERY),
+        UiControlOwner::Explicit(OWNER_UI_GALLERY),
         GalleryControlStatePreview(state),
     ));
     if state == UiControlState::Loading {
@@ -4918,7 +4920,7 @@ mod tests {
                     UiControlId::new("gallery.audit.dropdown"),
                     crate::framework::ui::widgets::UiControlKind::Dropdown,
                 ),
-                UiControlOwner(OWNER_UI_GALLERY),
+                UiControlOwner::Explicit(OWNER_UI_GALLERY),
                 GalleryAuditDropdown,
             ))
             .id();
@@ -4953,7 +4955,7 @@ mod tests {
                     UiControlId::new("gallery.audit.tooltip"),
                     crate::framework::ui::widgets::UiControlKind::Tooltip,
                 ),
-                UiControlOwner(OWNER_UI_GALLERY),
+                UiControlOwner::Explicit(OWNER_UI_GALLERY),
                 GalleryAuditTooltip,
             ))
             .id();

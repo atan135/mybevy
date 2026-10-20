@@ -825,7 +825,7 @@ mod tests {
                 UiCheckbox,
                 UiControlFlags::default(),
                 UiControlMeta::new(control_id, UiControlKind::Checkbox),
-                UiControlOwner(owner),
+                UiControlOwner::Explicit(owner),
             ))
             .id();
         app.world_mut().write_message(UiButtonEvent {
