@@ -307,6 +307,7 @@ pub(in crate::game) fn main_world_movement_snapshot_from_room(
             dir_y: entity.dir_y,
             moving: entity.moving,
             last_input_frame: entity.last_input_frame,
+            ..Default::default()
         })
         .collect();
     Some(pb::MovementSnapshotPush {

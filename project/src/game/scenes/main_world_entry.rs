@@ -2619,6 +2619,7 @@ mod tests {
                         dir_y: 1.0,
                         moving: false,
                         last_input_frame: 8,
+                        ..Default::default()
                     }],
                     full_sync: true,
                     reason: String::new(),
@@ -3144,6 +3145,7 @@ mod tests {
                 dir_y: 1.0,
                 moving: false,
                 last_input_frame: frame_id,
+                ..Default::default()
             }],
             full_sync: true,
             reason: String::new(),

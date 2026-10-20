@@ -3173,7 +3173,7 @@ fn send_auth_request(
         MessageType::AuthRes,
         &pb::AuthReq {
             ticket,
-            client_protocol_version: 0,
+            client_protocol_version: super::protocol::APPLICATION_PROTOCOL_VERSION,
         },
         correlation,
     ) else {

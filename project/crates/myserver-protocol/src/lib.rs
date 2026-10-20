@@ -12,6 +12,9 @@ pub mod chat_pb {
     include!(concat!(env!("OUT_DIR"), "/myserver.chat.rs"));
 }
 
+/// Application handshake version; independent of the packet header version.
+pub const APPLICATION_PROTOCOL_VERSION: u32 = 2;
+
 pub const MAGIC: u16 = 0xCAFE;
 pub const VERSION: u8 = 1;
 pub const HEADER_LEN: usize = 14;
@@ -339,6 +342,42 @@ pub fn parse_header(bytes: &[u8]) -> Result<PacketHeader, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn movement_speed_round_trips_and_legacy_omission_stays_invalid_zero() {
+        let entity = pb::EntityTransform {
+            character_id: "fixture-character".into(),
+            speed_metres_per_second: 2.0,
+            ..Default::default()
+        };
+        let push = pb::MovementSnapshotPush {
+            entities: vec![entity.clone()],
+            ..Default::default()
+        };
+        let encoded = encode_proto_packet(MessageType::MovementSnapshotPush, 17, &push);
+        let packets = PacketCodec::default().push_bytes(&encoded).unwrap();
+        let restored = pb::MovementSnapshotPush::decode(packets[0].body.as_slice()).unwrap();
+        assert_eq!(restored.entities[0].speed_metres_per_second, 2.0);
+        let recovery = pb::MovementRecoveryState {
+            entities: vec![entity],
+            ..Default::default()
+        };
+        assert_eq!(
+            pb::MovementRecoveryState::decode(recovery.encode_to_vec().as_slice())
+                .unwrap()
+                .entities[0]
+                .speed_metres_per_second,
+            2.0
+        );
+        assert_eq!(
+            pb::EntityTransform::decode(&[][..])
+                .unwrap()
+                .speed_metres_per_second,
+            0.0
+        );
+        assert_eq!(APPLICATION_PROTOCOL_VERSION, 2);
+        assert_eq!(VERSION, 1);
+    }
 
     #[test]
     fn codec_handles_fragmented_and_sticky_packets() {

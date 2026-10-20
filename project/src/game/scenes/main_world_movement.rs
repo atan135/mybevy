@@ -2107,6 +2107,7 @@ mod tests {
                 dir_y: 0.0,
                 moving: true,
                 last_input_frame,
+                ..Default::default()
             }],
             ..default()
         })
