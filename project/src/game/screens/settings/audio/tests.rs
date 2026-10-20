@@ -303,6 +303,103 @@ fn main_world_scene_settings_actions_switch_tabs_and_update_camera_follow_intent
 }
 
 #[test]
+fn main_world_camera_follow_click_survives_closing_and_reopening_settings() {
+    use crate::framework::ui::{
+        core::UiCurrentOwner,
+        document::UiDocumentRuntimeSystems,
+        widgets::{
+            UiButtonEvent, UiButtonEventKind, controls::update_selection_control_interactions,
+        },
+    };
+    use crate::game::{scenes::MainWorldCameraOrbitState, ui_ids::OWNER_MAIN_WORLD};
+
+    let mut app = audio_runtime_test_app();
+    app.init_resource::<MainWorldCameraOrbitState>()
+        .init_resource::<MainWorldSettingsTab>()
+        .add_message::<AudioCommand>()
+        .add_message::<GameRouteCommand>()
+        .add_systems(
+            Update,
+            update_selection_control_interactions.before(UiDocumentRuntimeSystems::Reconcile),
+        )
+        .add_systems(
+            Update,
+            (
+                handle_audio_settings_document_actions,
+                sync_main_world_audio_settings_document_bindings,
+            )
+                .chain()
+                .after(UiDocumentRuntimeSystems::Reconcile),
+        );
+    app.world_mut().resource_mut::<UiCurrentOwner>().owner = Some(OWNER_MAIN_WORLD);
+    let open = |app: &mut App| {
+        app.world_mut()
+            .write_message(DeclarativeScreenHostCommand::OpenDetachedRoute {
+                route: MAIN_WORLD_SETTINGS_ROUTE.to_owned(),
+            });
+        update_frames(app, 8);
+        let runtime = app.world().resource::<UiDocumentRuntime>();
+        let instance = runtime
+            .active_instance(
+                OWNER_MAIN_WORLD_SETTINGS_PANEL.as_str(),
+                &UiDocumentId::from_str(MAIN_WORLD_AUDIO_SETTINGS_DOCUMENT_ID).unwrap(),
+            )
+            .unwrap();
+        runtime
+            .node_entity(
+                instance,
+                &UiNodeId::from_str("main_world_settings.camera.follow_player").unwrap(),
+            )
+            .unwrap()
+    };
+    let toggle = open(&mut app);
+    app.world_mut().write_message(UiButtonEvent {
+        entity: toggle,
+        kind: UiButtonEventKind::Click,
+        button: None,
+    });
+    update_frames(&mut app, 3);
+    assert!(
+        !app.world()
+            .resource::<MainWorldCameraOrbitState>()
+            .follow_player
+    );
+
+    app.world_mut()
+        .write_message(DeclarativeScreenHostCommand::CloseRoute {
+            route: MAIN_WORLD_SETTINGS_ROUTE.to_owned(),
+        });
+    update_frames(&mut app, 4);
+    let reopened_toggle = open(&mut app);
+    assert!(
+        !app.world()
+            .resource::<MainWorldCameraOrbitState>()
+            .follow_player
+    );
+    assert!(
+        !app.world()
+            .get::<crate::framework::ui::widgets::UiControlFlags>(reopened_toggle)
+            .unwrap()
+            .selected
+    );
+    assert_eq!(
+        app.world().resource::<UiCurrentOwner>().owner,
+        Some(OWNER_MAIN_WORLD)
+    );
+    app.world_mut().write_message(UiButtonEvent {
+        entity: reopened_toggle,
+        kind: UiButtonEventKind::Click,
+        button: None,
+    });
+    update_frames(&mut app, 3);
+    assert!(
+        app.world()
+            .resource::<MainWorldCameraOrbitState>()
+            .follow_player
+    );
+}
+
+#[test]
 fn master_mute_action_uses_the_explicit_control_value() {
     let mut app = audio_action_test_app(true);
     app.world_mut().write_message(audio_dispatch(
