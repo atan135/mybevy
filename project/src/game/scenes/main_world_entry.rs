@@ -348,6 +348,7 @@ pub(in crate::game) struct MainWorldEntryState {
     pub policy_id: Option<String>,
     pub authoritative_scene_id: Option<i32>,
     pub position: Option<Vec3>,
+    pub movement_speed_metres_per_second: Option<f32>,
     pub snapshot_epoch: u64,
     pub snapshot_generation: u32,
     pub scene_content_ready: bool,
@@ -391,6 +392,7 @@ impl Default for MainWorldEntryState {
             policy_id: None,
             authoritative_scene_id: None,
             position: None,
+            movement_speed_metres_per_second: None,
             snapshot_epoch: 0,
             snapshot_generation: 0,
             scene_content_ready: false,
@@ -456,7 +458,7 @@ impl MainWorldEntryState {
         )
     }
 
-    fn accepts_scoped_authority_event(
+    pub(super) fn accepts_scoped_authority_event(
         &self,
         session: &MyServerSession,
         connection_id: ConnectionId,
@@ -487,6 +489,7 @@ impl MainWorldEntryState {
         self.policy_id = None;
         self.authoritative_scene_id = None;
         self.position = None;
+        self.movement_speed_metres_per_second = None;
         self.snapshot_epoch = 0;
         self.snapshot_generation = 0;
         self.scene_content_ready = false;
@@ -526,6 +529,7 @@ impl MainWorldEntryState {
         self.policy_id = None;
         self.authoritative_scene_id = None;
         self.position = None;
+        self.movement_speed_metres_per_second = None;
         self.snapshot_epoch = 0;
         self.snapshot_generation = 0;
         self.scene_content_ready = false;
@@ -1475,6 +1479,7 @@ fn consume_main_world_authority_events(
                 state.room_membership = MainWorldRoomMembership::Unknown;
                 state.authoritative_scene_id = None;
                 state.position = None;
+                state.movement_speed_metres_per_second = None;
                 state.snapshot_epoch = 0;
                 state.snapshot_generation = 0;
                 state.room_ready_requested = false;
@@ -1578,6 +1583,7 @@ fn fallback_to_main_world_join_after_reconnect_failure(
     state.snapshot_generation = 0;
     state.authoritative_scene_id = None;
     state.position = None;
+    state.movement_speed_metres_per_second = None;
     state.room_start_requested = false;
     state.room_ready_requested = false;
     state.room_ready_acknowledged = false;
@@ -1603,7 +1609,10 @@ fn consume_main_world_entry_snapshot(
     scene_commands: &mut MessageWriter<SceneCommand>,
 ) {
     let push = &snapshot.push;
-    if push.room_id != MAIN_WORLD_AUTHORITY_CONTRACT.room_id
+    if snapshot
+        .entry_generation
+        .is_some_and(|generation| generation != state.generation)
+        || push.room_id != MAIN_WORLD_AUTHORITY_CONTRACT.room_id
         || (state.phase == MainWorldEntryPhase::JoiningRoom && !state.join_acknowledged)
         || (state.phase == MainWorldEntryPhase::Recovering
             && (!state.join_acknowledged || !state.reconnect_room_acknowledged))
@@ -1641,6 +1650,15 @@ fn consume_main_world_entry_snapshot(
         );
         return;
     };
+    if !super::main_world_contract::main_world_valid_move_speed(entity.speed_metres_per_second) {
+        warn!(
+            speed = entity.speed_metres_per_second,
+            "main world missing or invalid authoritative movement speed"
+        );
+        state.movement_speed_metres_per_second = None;
+        return;
+    }
+    state.movement_speed_metres_per_second = Some(entity.speed_metres_per_second);
     state.room_id = Some(push.room_id.clone());
     state.room_membership = MainWorldRoomMembership::Joined;
     state.policy_id = Some(MAIN_WORLD_AUTHORITY_CONTRACT.policy_id.to_owned());
@@ -1929,6 +1947,7 @@ fn begin_recovery(
     if !retrying {
         state.authoritative_scene_id = None;
         state.position = None;
+        state.movement_speed_metres_per_second = None;
         state.snapshot_epoch = 0;
         state.snapshot_generation = 0;
         state.room_ready_requested = false;
@@ -2619,6 +2638,7 @@ mod tests {
                         dir_y: 1.0,
                         moving: false,
                         last_input_frame: 8,
+                        speed_metres_per_second: 4.0,
                         ..Default::default()
                     }],
                     full_sync: true,
@@ -3017,7 +3037,7 @@ mod tests {
                     room_id: "main-world-public".to_owned(),
                     state: "in_game".to_owned(),
                     current_frame_id: 120,
-                    game_state: r#"{"room_id":"main-world-public","scene_id":1,"entities":[{"entity_id":1,"character_id":"chr_1","scene_id":1,"x":2002.0,"y":2003.0,"dir_x":0.0,"dir_y":1.0,"moving":false,"last_input_frame":119}]}"#.to_owned(),
+                    game_state: r#"{"room_id":"main-world-public","scene_id":1,"entities":[{"entity_id":1,"character_id":"chr_1","scene_id":1,"x":2002.0,"y":2003.0,"dir_x":0.0,"dir_y":1.0,"moving":false,"last_input_frame":119, "speed_metres_per_second": 4.0}]}"#.to_owned(),
                     ..Default::default()
                 }),
             }));
@@ -3145,6 +3165,7 @@ mod tests {
                 dir_y: 1.0,
                 moving: false,
                 last_input_frame: frame_id,
+                speed_metres_per_second: 4.0,
                 ..Default::default()
             }],
             full_sync: true,

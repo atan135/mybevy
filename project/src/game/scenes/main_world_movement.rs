@@ -34,12 +34,13 @@ use crate::{
             },
             main_world_contract::{
                 MAIN_WORLD_AUTHORITY_CONTRACT, MAIN_WORLD_AUTHORITY_TICK_SECONDS,
-                MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND, MAIN_WORLD_MOVE_SPEED_METRES_PER_SECOND,
-                MAIN_WORLD_PUBLIC_ROOM_ID, MAIN_WORLD_SERVER_COORDINATE_MAX_EXCLUSIVE_METRES,
+                MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND, MAIN_WORLD_PUBLIC_ROOM_ID,
+                MAIN_WORLD_SERVER_COORDINATE_MAX_EXCLUSIVE_METRES,
                 MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES, MainWorldAuthorityFrame,
                 MainWorldConfirmedFrame, MainWorldMoveInputKind, MainWorldPredictedFrame,
                 MainWorldRenderFrame, main_world_bevy_position_from_authority,
                 main_world_normalized_direction, main_world_server_position,
+                main_world_valid_move_speed,
             },
             main_world_entry::{
                 MainWorldEntryPhase, MainWorldEntryState, MainWorldEntryUpdateSet,
@@ -488,6 +489,8 @@ pub(in crate::game) struct MainWorldMovementRuntime {
     pub generation: u64,
     pub session_id: Option<SceneSessionId>,
     pub input_frozen: bool,
+    pub speed_metres_per_second: Option<f32>,
+    speed_fault: bool,
     pub render_frame: MainWorldRenderFrame,
     pub predicted: MainWorldPredictedState,
     predicted_previous: MainWorldPredictedState,
@@ -513,6 +516,8 @@ impl Default for MainWorldMovementRuntime {
             generation: 0,
             session_id: None,
             input_frozen: true,
+            speed_metres_per_second: None,
+            speed_fault: false,
             render_frame: MainWorldRenderFrame::default(),
             predicted: MainWorldPredictedState::default(),
             predicted_previous: MainWorldPredictedState::default(),
@@ -536,7 +541,11 @@ impl Default for MainWorldMovementRuntime {
 
 impl MainWorldMovementRuntime {
     pub fn allows_local_movement(&self) -> bool {
-        !self.input_frozen && self.session_id.is_some()
+        !self.input_frozen
+            && self.session_id.is_some()
+            && self
+                .speed_metres_per_second
+                .is_some_and(main_world_valid_move_speed)
     }
 
     pub fn bind_active_session(
@@ -562,6 +571,39 @@ impl MainWorldMovementRuntime {
         self.input_frozen = false;
     }
 
+    fn accept_speed(&mut self, speed: f32, trusted_complete: bool) -> bool {
+        let changed = self
+            .speed_metres_per_second
+            .is_some_and(|previous| previous != speed);
+        if !main_world_valid_move_speed(speed) || changed {
+            if !self.speed_fault {
+                warn!(speed, previous_speed = ?self.speed_metres_per_second, "main world movement speed contract rejected; waiting for complete recovery");
+            }
+            self.speed_metres_per_second = None;
+            self.speed_fault = true;
+            self.input_frozen = true;
+            self.pending_prediction.clear();
+            self.unconfirmed_inputs.clear();
+            self.predicted.moving = false;
+            self.predicted_previous = self.predicted;
+            self.clear_visual_correction();
+            return false;
+        }
+        if self.speed_metres_per_second.is_none() && !trusted_complete {
+            return false;
+        }
+        if self.speed_fault && !trusted_complete {
+            return false;
+        }
+        if self.speed_metres_per_second.is_none() {
+            self.last_applied_authority_frame = None;
+        }
+        self.speed_metres_per_second = Some(speed);
+        self.speed_fault = false;
+        self.input_frozen = false;
+        true
+    }
+
     pub fn freeze(&mut self) {
         self.input_frozen = true;
     }
@@ -569,6 +611,8 @@ impl MainWorldMovementRuntime {
     pub fn clear(&mut self) {
         self.input_frozen = true;
         self.session_id = None;
+        self.speed_metres_per_second = None;
+        self.speed_fault = false;
         self.render_frame = MainWorldRenderFrame::default();
         self.predicted = MainWorldPredictedState::default();
         self.predicted_previous = MainWorldPredictedState::default();
@@ -632,6 +676,8 @@ impl MainWorldMovementRuntime {
 
     fn reset_authority_clock_to(&mut self, epoch: u64, frame: MainWorldAuthorityFrame) {
         self.room_clock_epoch = epoch.max(1);
+        self.speed_metres_per_second = None;
+        self.speed_fault = true;
         self.pending_prediction.clear();
         self.unconfirmed_inputs.clear();
         self.authority_baseline = None;
@@ -841,6 +887,12 @@ fn sync_main_world_movement_lifecycle(
             runtime.predicted.frame = MainWorldPredictedFrame(entry.snapshot_generation);
             runtime.predicted_previous = runtime.predicted;
         }
+        if !runtime.reconnect_requested_seen {
+            runtime.speed_metres_per_second = None;
+            runtime.speed_fault = true;
+            runtime.pending_prediction.clear();
+            runtime.unconfirmed_inputs.clear();
+        }
         runtime.observe_reconnect_request(true);
         intent.request_stop();
         runtime.freeze();
@@ -855,6 +907,11 @@ fn sync_main_world_movement_lifecycle(
             entry.position,
             MainWorldAuthorityFrame(entry.snapshot_generation),
         );
+        if runtime.speed_metres_per_second.is_none() && !runtime.speed_fault {
+            runtime.speed_metres_per_second = entry
+                .movement_speed_metres_per_second
+                .filter(|speed| main_world_valid_move_speed(*speed));
+        }
         runtime.observe_reconnect_request(entry.reconnect_requested);
         return;
     }
@@ -929,6 +986,12 @@ fn consume_main_world_local_authority_snapshots(
         continue;
     }
     for snapshot in snapshot_events.read() {
+        if snapshot
+            .entry_generation
+            .is_some_and(|generation| generation != runtime.generation)
+        {
+            continue;
+        }
         let push = &snapshot.push;
         if push.room_id != MAIN_WORLD_PUBLIC_ROOM_ID
             || (!push.target_character_ids.is_empty()
@@ -951,6 +1014,15 @@ fn consume_main_world_local_authority_snapshots(
         else {
             continue;
         };
+        let direction = Vec2::new(entity.dir_x, entity.dir_y);
+        let direction = if direction == Vec2::ZERO {
+            Vec2::ZERO
+        } else {
+            let Ok(direction) = main_world_normalized_direction(direction) else {
+                continue;
+            };
+            direction
+        };
         if snapshot.epoch < runtime.room_clock_epoch {
             continue;
         }
@@ -965,21 +1037,27 @@ fn consume_main_world_local_authority_snapshots(
                 dispatch.last_dispatched_frame = MainWorldAuthorityFrame::default();
             }
         }
+        let trusted_complete = snapshot.complete_room_entities
+            || push.full_sync
+            || matches!(
+                snapshot.source,
+                super::main_world_snapshot::MainWorldSnapshotSource::Recovery
+            );
         if runtime
             .last_applied_authority_frame
             .is_some_and(|frame| push.frame_id <= frame.0)
+            && !(runtime.speed_fault
+                && trusted_complete
+                && runtime
+                    .last_applied_authority_frame
+                    .is_some_and(|frame| push.frame_id == frame.0))
         {
             continue;
         }
-        let direction = Vec2::new(entity.dir_x, entity.dir_y);
-        let direction = if direction == Vec2::ZERO {
-            Vec2::ZERO
-        } else {
-            let Ok(direction) = main_world_normalized_direction(direction) else {
-                continue;
-            };
-            direction
-        };
+        if !runtime.accept_speed(entity.speed_metres_per_second, trusted_complete) {
+            continue;
+        }
+        runtime.input_frozen = !entry.allows_gameplay_input();
         let reconnect_rebase = runtime.take_reconnect_rebase();
         let authority = MainWorldLocalAuthoritySnapshot {
             frame: MainWorldAuthorityFrame(push.frame_id),
@@ -1006,7 +1084,7 @@ fn consume_main_world_local_authority_snapshots(
 /// Rejects are intentionally stricter than broadcast snapshots because a
 /// stale reject must never rewind a newer prediction generation.
 fn consume_main_world_movement_rejects(
-    mut events: MessageReader<MyServerEvent>,
+    mut events: MessageReader<super::main_world_snapshot::MainWorldMovementRejectEvent>,
     fixed_time: Res<Time<Fixed>>,
     entry: Option<Res<MainWorldEntryState>>,
     mut intent: ResMut<MainWorldMovementIntent>,
@@ -1035,9 +1113,14 @@ fn consume_main_world_movement_rejects(
     }
 
     for event in events.read() {
-        let MyServerEvent::MovementRejectPush(reject) = event else {
+        if event.epoch < runtime.room_clock_epoch
+            || event
+                .entry_generation
+                .is_some_and(|generation| generation != runtime.generation)
+        {
             continue;
-        };
+        }
+        let reject = &event.reject;
         if reject.room_id != MAIN_WORLD_PUBLIC_ROOM_ID || reject.character_id != character_id {
             continue;
         }
@@ -1076,6 +1159,11 @@ fn consume_main_world_movement_rejects(
         else {
             continue;
         };
+        if !runtime.accept_speed(corrected.speed_metres_per_second, false) {
+            intent.request_stop();
+            continue;
+        }
+        runtime.input_frozen = !entry.allows_gameplay_input();
         let raw_direction = Vec2::new(corrected.dir_x, corrected.dir_y);
         let direction_valid =
             raw_direction.is_finite() && raw_direction.length_squared() > f32::EPSILON;
@@ -1188,6 +1276,12 @@ fn consume_main_world_remote_authority_snapshots(
         return;
     }
     for snapshot in snapshot_events.read() {
+        if snapshot
+            .entry_generation
+            .is_some_and(|generation| generation != runtime.generation)
+        {
+            continue;
+        }
         let push = &snapshot.push;
         if push.room_id != MAIN_WORLD_PUBLIC_ROOM_ID {
             continue;
@@ -1308,7 +1402,8 @@ fn write_main_world_remote_visual(
         &mut Transform,
     )>,
 ) {
-    if !runtime.allows_local_movement() {
+    // Remote snapshots interpolate authoritative positions independently of the local speed.
+    if runtime.input_frozen || runtime.session_id.is_none() {
         return;
     }
     for (player, mut position, mut object_state, mut transform) in &mut players {
@@ -1366,6 +1461,14 @@ fn reconcile_main_world_local_authority(
     authority: MainWorldLocalAuthoritySnapshot,
     visual_alpha: f32,
 ) -> MainWorldAuthorityCorrection {
+    let Some(speed) = runtime
+        .speed_metres_per_second
+        .filter(|speed| main_world_valid_move_speed(*speed))
+    else {
+        runtime.pending_prediction.clear();
+        runtime.unconfirmed_inputs.clear();
+        return MainWorldAuthorityCorrection::Rebased;
+    };
     let previous_visual = runtime.visual_position(visual_alpha);
     let identity_changed = runtime
         .local_authority_entity_id
@@ -1438,7 +1541,7 @@ fn reconcile_main_world_local_authority(
     for input in &mut runtime.unconfirmed_inputs {
         input.predicted_before = replayed;
         input.predicted_after =
-            main_world_predicted_after_input(replayed, input.frame, input.direction);
+            main_world_predicted_after_input(replayed, input.frame, input.direction, speed);
         input.confirmed = false;
         replayed = input.predicted_after;
         if !pending_frames.contains(&input.frame.0) {
@@ -1629,7 +1732,11 @@ fn dispatch_main_world_move_input(
         .back()
         .map(|pending| pending.input.predicted_after)
         .unwrap_or(movement.predicted);
-    let predicted_after = main_world_predicted_after_input(predicted_before, frame, direction);
+    let Some(speed) = movement.speed_metres_per_second else {
+        return;
+    };
+    let predicted_after =
+        main_world_predicted_after_input(predicted_before, frame, direction, speed);
     let Ok(server_position) = main_world_server_position(predicted_after.position) else {
         return;
     };
@@ -1827,6 +1934,7 @@ fn main_world_predicted_after_input(
     predicted_before: MainWorldPredictedState,
     frame: MainWorldPredictedFrame,
     direction: Vec2,
+    speed_metres_per_second: f32,
 ) -> MainWorldPredictedState {
     let direction = main_world_normalized_direction(direction).unwrap_or(Vec2::ZERO);
     let moving = direction != Vec2::ZERO;
@@ -1835,7 +1943,7 @@ fn main_world_predicted_after_input(
     predicted_after.direction = direction;
     predicted_after.moving = moving;
     if moving {
-        let step = MAIN_WORLD_MOVE_SPEED_METRES_PER_SECOND * MAIN_WORLD_AUTHORITY_TICK_SECONDS;
+        let step = speed_metres_per_second * MAIN_WORLD_AUTHORITY_TICK_SECONDS;
         predicted_after.position = main_world_clamped_predicted_position(
             predicted_before.position + Vec3::new(direction.x * step, 0.0, direction.y * step),
         );
@@ -1909,12 +2017,289 @@ mod tests {
     use bevy::time::TimeUpdateStrategy;
     use std::time::Duration;
 
+    fn speed_event(frame: u32, speed: f32, complete: bool) -> MyServerEvent {
+        let mut event = local_snapshot(
+            MAIN_WORLD_PUBLIC_ROOM_ID,
+            frame,
+            "chr-local",
+            7,
+            MAIN_WORLD_SERVER_SCENE_ID,
+            2001.0,
+            2001.0,
+            frame,
+        );
+        if let MyServerEvent::MovementSnapshotPush(push) = &mut event {
+            push.entities[0].speed_metres_per_second = speed;
+            push.full_sync = complete;
+        }
+        event
+    }
+
+    #[test]
+    fn server_speed_controls_prediction_and_authority_replay() {
+        for speed in [1.0, 2.0, 5.0] {
+            let (mut app, _) = networked_movement_app();
+            app.world_mut()
+                .resource_mut::<MainWorldEntryState>()
+                .movement_speed_metres_per_second = Some(speed);
+            app.update();
+            let before = predicted_state(41, Vec3::ZERO, Vec2::X, true);
+            let expected = main_world_predicted_after_input(
+                before,
+                MainWorldPredictedFrame(42),
+                Vec2::X,
+                speed,
+            );
+            assert!((expected.position.x - speed * 0.05).abs() < 0.00001);
+            let mut runtime = app.world_mut().resource_mut::<MainWorldMovementRuntime>();
+            runtime.push_unconfirmed_input(input(42));
+            reconcile_main_world_local_authority(
+                &mut runtime,
+                MainWorldLocalAuthoritySnapshot {
+                    frame: MainWorldAuthorityFrame(41),
+                    confirmed_frame: MainWorldConfirmedFrame(41),
+                    server_entity_id: 7,
+                    scene_id: MAIN_WORLD_SERVER_SCENE_ID,
+                    position: Vec3::ZERO,
+                    direction: Vec2::X,
+                    moving: true,
+                    force_rebase: true,
+                },
+                0.0,
+            );
+            assert!(
+                (runtime.unconfirmed_inputs[0].predicted_after.position.x - speed * 0.05).abs()
+                    < 0.00001
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_speed_freezes_and_clears_history_until_complete_recovery() {
+        for invalid in [0.0, -1.0, f32::NAN, f32::INFINITY, 101.0] {
+            let (mut app, _) = networked_movement_app();
+            app.update();
+            app.world_mut()
+                .resource_mut::<MainWorldMovementRuntime>()
+                .push_unconfirmed_input(input(42));
+            app.world_mut()
+                .write_message(speed_event(50, invalid, false));
+            app.update();
+            let runtime = app.world().resource::<MainWorldMovementRuntime>();
+            assert!(!runtime.allows_local_movement());
+            assert!(runtime.unconfirmed_inputs.is_empty());
+            assert!(runtime.pending_prediction.is_empty());
+            app.world_mut().write_message(speed_event(51, 4.0, false));
+            app.update();
+            assert!(
+                !app.world()
+                    .resource::<MainWorldMovementRuntime>()
+                    .allows_local_movement()
+            );
+            app.world_mut().write_message(speed_event(52, 4.0, true));
+            app.update();
+            assert!(
+                app.world()
+                    .resource::<MainWorldMovementRuntime>()
+                    .allows_local_movement()
+            );
+        }
+    }
+
+    #[test]
+    fn stale_speed_cannot_freeze_and_changed_current_speed_requires_complete_recovery() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        app.world_mut().write_message(speed_event(50, 4.0, false));
+        app.update();
+        app.world_mut()
+            .write_message(speed_event(49, f32::NAN, false));
+        app.world_mut().write_message(speed_event(50, 1.0, false));
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .speed_metres_per_second,
+            Some(4.0)
+        );
+        assert!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .allows_local_movement()
+        );
+        app.world_mut().write_message(speed_event(51, 2.0, false));
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .allows_local_movement()
+        );
+        app.world_mut().write_message(speed_event(52, 2.0, true));
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .speed_metres_per_second,
+            Some(2.0)
+        );
+        let before = app.world().resource::<MainWorldMovementRuntime>().predicted;
+        app.world_mut().write_message(speed_event(52, 2.0, true));
+        app.update();
+        assert_eq!(
+            app.world().resource::<MainWorldMovementRuntime>().predicted,
+            before
+        );
+    }
+
+    #[test]
+    fn old_epoch_reject_cannot_corrupt_restored_speed_in_same_generation() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        app.world_mut().write_message(speed_event(50, 4.0, true));
+        app.update();
+        let old_epoch = app.world().resource::<MainWorldSnapshotBusState>().epoch;
+        let mut recovery = speed_event(1, 2.0, true);
+        if let MyServerEvent::MovementSnapshotPush(push) = &mut recovery {
+            push.correction_kind = pb::MovementCorrectionKind::Recovery as i32;
+        }
+        app.world_mut().write_message(recovery);
+        app.update();
+        assert!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .room_clock_epoch
+                > old_epoch
+        );
+        let MyServerEvent::MovementRejectPush(reject) = movement_reject_event(
+            MAIN_WORLD_PUBLIC_ROOM_ID,
+            "chr-local",
+            100,
+            0,
+            MAIN_WORLD_SERVER_SCENE_ID,
+            pb::MovementCorrectionReason::MovementRejected,
+            1.0,
+            0.0,
+        ) else {
+            unreachable!()
+        };
+        app.world_mut().write_message(
+            super::super::main_world_snapshot::MainWorldMovementRejectEvent {
+                epoch: old_epoch,
+                entry_generation: Some(7),
+                reject,
+            },
+        );
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .speed_metres_per_second,
+            Some(2.0)
+        );
+        assert!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .allows_local_movement()
+        );
+    }
+
+    #[test]
+    fn missing_speed_blocks_send_and_old_generation_snapshot_cannot_replace_new_speed() {
+        let (mut app, _) = networked_movement_app();
+        app.world_mut()
+            .resource_mut::<MainWorldEntryState>()
+            .movement_speed_metres_per_second = None;
+        press_key(&mut app, KeyCode::KeyD);
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .allows_local_movement()
+        );
+        assert!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .unconfirmed_inputs
+                .is_empty()
+        );
+        let old_epoch = app.world().resource::<MainWorldSnapshotBusState>().epoch;
+        {
+            let mut entry = app.world_mut().resource_mut::<MainWorldEntryState>();
+            entry.generation += 1;
+            entry.scene_session_id = Some(SceneSessionId::from("new-session"));
+            entry.movement_speed_metres_per_second = Some(2.0);
+        }
+        let MyServerEvent::MovementSnapshotPush(push) = speed_event(90, 1.0, true) else {
+            unreachable!()
+        };
+        let MyServerEvent::MovementRejectPush(reject) = movement_reject_event(
+            MAIN_WORLD_PUBLIC_ROOM_ID,
+            "chr-local",
+            90,
+            0,
+            MAIN_WORLD_SERVER_SCENE_ID,
+            pb::MovementCorrectionReason::MovementRejected,
+            1.0,
+            0.0,
+        ) else {
+            unreachable!()
+        };
+        app.world_mut().write_message(
+            super::super::main_world_snapshot::MainWorldMovementRejectEvent {
+                epoch: old_epoch,
+                entry_generation: Some(7),
+                reject,
+            },
+        );
+        app.world_mut().write_message(MainWorldSnapshotEvent {
+            epoch: old_epoch,
+            entry_generation: Some(7),
+            source: super::super::main_world_snapshot::MainWorldSnapshotSource::Movement,
+            complete_room_entities: true,
+            push,
+        });
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .speed_metres_per_second,
+            Some(2.0)
+        );
+    }
+
+    #[test]
+    fn reject_with_changed_speed_cannot_bypass_fixed_speed_gate() {
+        let (mut app, _) = networked_movement_app();
+        app.update();
+        let mut event = movement_reject_event(
+            MAIN_WORLD_PUBLIC_ROOM_ID,
+            "chr-local",
+            50,
+            0,
+            MAIN_WORLD_SERVER_SCENE_ID,
+            pb::MovementCorrectionReason::MovementRejected,
+            1.0,
+            0.0,
+        );
+        if let MyServerEvent::MovementRejectPush(reject) = &mut event {
+            reject.corrected.as_mut().unwrap().speed_metres_per_second = 2.0;
+        }
+        app.world_mut().write_message(event);
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<MainWorldMovementRuntime>()
+                .allows_local_movement()
+        );
+    }
+
     fn active_entry(generation: u64, session_id: &str) -> MainWorldEntryState {
         MainWorldEntryState {
             generation,
             phase: MainWorldEntryPhase::Active,
             scene_session_id: Some(SceneSessionId::from(session_id)),
             input_frozen: false,
+            movement_speed_metres_per_second: Some(4.0),
             ..Default::default()
         }
     }
@@ -2107,6 +2492,7 @@ mod tests {
                 dir_y: 0.0,
                 moving: true,
                 last_input_frame,
+                speed_metres_per_second: 4.0,
                 ..Default::default()
             }],
             ..default()
@@ -2125,6 +2511,7 @@ mod tests {
             room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
             frame_id: frame,
             entities: vec![pb::EntityTransform {
+                speed_metres_per_second: 4.0,
                 entity_id: 99,
                 character_id: "chr-remote".to_owned(),
                 scene_id: MAIN_WORLD_SERVER_SCENE_ID,
@@ -2155,6 +2542,7 @@ mod tests {
                 .map(
                     |(character_id, entity_id, scene_id, x, y, moving, dir_x, dir_y)| {
                         pb::EntityTransform {
+                            speed_metres_per_second: 4.0,
                             character_id: character_id.to_owned(),
                             entity_id,
                             scene_id,
@@ -2199,6 +2587,7 @@ mod tests {
                 dir_y,
                 moving: true,
                 last_input_frame: reference_frame,
+                speed_metres_per_second: 4.0,
                 ..default()
             }),
             correction_kind: pb::MovementCorrectionKind::Strong as i32,
@@ -2902,7 +3291,7 @@ mod tests {
         app.update();
         let base = predicted_state(41, Vec3::ZERO, Vec2::X, true);
         let first_after =
-            main_world_predicted_after_input(base, MainWorldPredictedFrame(42), Vec2::X);
+            main_world_predicted_after_input(base, MainWorldPredictedFrame(42), Vec2::X, 4.0);
         let first = MainWorldUnconfirmedInput {
             frame: MainWorldPredictedFrame(42),
             direction: Vec2::X,
@@ -2910,8 +3299,12 @@ mod tests {
             predicted_after: first_after,
             confirmed: false,
         };
-        let second_after =
-            main_world_predicted_after_input(first_after, MainWorldPredictedFrame(43), Vec2::X);
+        let second_after = main_world_predicted_after_input(
+            first_after,
+            MainWorldPredictedFrame(43),
+            Vec2::X,
+            4.0,
+        );
         let second = MainWorldUnconfirmedInput {
             frame: MainWorldPredictedFrame(43),
             direction: Vec2::X,
@@ -2919,8 +3312,12 @@ mod tests {
             predicted_after: second_after,
             confirmed: false,
         };
-        let third_after =
-            main_world_predicted_after_input(second_after, MainWorldPredictedFrame(44), Vec2::X);
+        let third_after = main_world_predicted_after_input(
+            second_after,
+            MainWorldPredictedFrame(44),
+            Vec2::X,
+            4.0,
+        );
         let third = MainWorldUnconfirmedInput {
             frame: MainWorldPredictedFrame(44),
             direction: Vec2::X,
@@ -2995,7 +3392,7 @@ mod tests {
         app.update();
         let base = predicted_state(40, Vec3::ZERO, Vec2::X, true);
         let confirmed_after =
-            main_world_predicted_after_input(base, MainWorldPredictedFrame(41), Vec2::X);
+            main_world_predicted_after_input(base, MainWorldPredictedFrame(41), Vec2::X, 4.0);
         let confirmed = MainWorldUnconfirmedInput {
             frame: MainWorldPredictedFrame(41),
             direction: Vec2::X,
@@ -3003,8 +3400,12 @@ mod tests {
             predicted_after: confirmed_after,
             confirmed: false,
         };
-        let applied_after =
-            main_world_predicted_after_input(confirmed_after, MainWorldPredictedFrame(42), Vec2::X);
+        let applied_after = main_world_predicted_after_input(
+            confirmed_after,
+            MainWorldPredictedFrame(42),
+            Vec2::X,
+            4.0,
+        );
         let applied = MainWorldUnconfirmedInput {
             frame: MainWorldPredictedFrame(42),
             direction: Vec2::X,
@@ -3335,6 +3736,7 @@ mod tests {
             entry.phase = MainWorldEntryPhase::Recovering;
             entry.input_frozen = true;
             entry.reconnect_requested = true;
+            entry.reconnect_room_acknowledged = true;
         }
         app.world_mut().write_message({
             let mut event = local_snapshot(
@@ -3351,6 +3753,7 @@ mod tests {
                 push.full_sync = true;
                 push.correction_kind = pb::MovementCorrectionKind::Recovery as i32;
                 push.entities.push(pb::EntityTransform {
+                    speed_metres_per_second: 4.0,
                     entity_id: 99,
                     character_id: "chr-remote".to_owned(),
                     scene_id: MAIN_WORLD_SERVER_SCENE_ID,
@@ -3402,6 +3805,7 @@ mod tests {
             entry.phase = MainWorldEntryPhase::Recovering;
             entry.input_frozen = true;
             entry.reconnect_requested = true;
+            entry.reconnect_room_acknowledged = true;
         }
         app.update();
         {
@@ -3458,7 +3862,8 @@ mod tests {
     #[test]
     fn fixed_prediction_advances_exactly_four_metres_per_second_and_normalizes_diagonals() {
         let start = predicted_state(41, Vec3::ZERO, Vec2::ZERO, false);
-        let forward = main_world_predicted_after_input(start, MainWorldPredictedFrame(42), Vec2::Y);
+        let forward =
+            main_world_predicted_after_input(start, MainWorldPredictedFrame(42), Vec2::Y, 4.0);
         assert_eq!(forward.position, Vec3::new(0.0, 0.0, 0.2));
         assert_eq!(forward.direction, Vec2::Y);
         assert!(forward.moving);
@@ -3467,6 +3872,7 @@ mod tests {
             start,
             MainWorldPredictedFrame(42),
             Vec2::new(1.0, 1.0),
+            4.0,
         );
         assert!((diagonal.position.length() - 0.2).abs() < 0.000_01);
         assert_vec2_approx_eq(diagonal.direction, Vec2::new(1.0, 1.0).normalize());
@@ -3486,6 +3892,7 @@ mod tests {
             start,
             MainWorldPredictedFrame(42),
             Vec2::new(1.0, 1.0),
+            4.0,
         );
         assert_eq!(bounded.position.x, upper);
         assert_eq!(bounded.position.z, upper);
@@ -3493,7 +3900,7 @@ mod tests {
         assert!(main_world_server_position(bounded.position).is_ok());
 
         let stopped =
-            main_world_predicted_after_input(bounded, MainWorldPredictedFrame(43), Vec2::ZERO);
+            main_world_predicted_after_input(bounded, MainWorldPredictedFrame(43), Vec2::ZERO, 4.0);
         assert_eq!(stopped.position, bounded.position);
         assert_eq!(stopped.direction, Vec2::ZERO);
         assert!(!stopped.moving);
@@ -3512,6 +3919,7 @@ mod tests {
                     state,
                     MainWorldPredictedFrame(42 + index as u32),
                     direction,
+                    4.0,
                 );
             }
             state
@@ -4413,6 +4821,7 @@ mod tests {
             entry.position,
             MainWorldAuthorityFrame(entry.snapshot_generation),
         );
+        runtime.speed_metres_per_second = Some(4.0);
         let session = connected_main_world_session();
         assert!(main_world_movement_send_gate(&entry, &runtime, &session));
 

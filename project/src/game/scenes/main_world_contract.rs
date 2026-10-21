@@ -51,7 +51,12 @@ pub(in crate::game) const MAIN_WORLD_WORLD_CENTRE_OFFSET_METRES: f32 = 2000.0;
 pub(in crate::game) const MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND: u32 = 20;
 pub(in crate::game) const MAIN_WORLD_AUTHORITY_TICK_SECONDS: f32 =
     1.0 / MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND as f32;
-pub(in crate::game) const MAIN_WORLD_MOVE_SPEED_METRES_PER_SECOND: f32 = 4.0;
+/// Safety bound shared with the server movement contract; this is not a default speed.
+pub(in crate::game) const MAIN_WORLD_MAX_MOVE_SPEED_METRES_PER_SECOND: f32 = 100.0;
+
+pub(in crate::game) fn main_world_valid_move_speed(speed: f32) -> bool {
+    speed.is_finite() && speed > 0.0 && speed <= MAIN_WORLD_MAX_MOVE_SPEED_METRES_PER_SECOND
+}
 
 /// `MOVE_DIR` is sent once per authority frame while movement is held. This
 /// keeps the existing three-frame server-side stop watchdog alive. A
@@ -279,6 +284,8 @@ struct MainWorldRoomMovementEntity {
     dir_y: f32,
     moving: bool,
     last_input_frame: u32,
+    #[serde(default)]
+    speed_metres_per_second: f32,
 }
 
 /// Converts the complete `movement_demo` state embedded in a room/frame
@@ -307,7 +314,7 @@ pub(in crate::game) fn main_world_movement_snapshot_from_room(
             dir_y: entity.dir_y,
             moving: entity.moving,
             last_input_frame: entity.last_input_frame,
-            ..Default::default()
+            speed_metres_per_second: entity.speed_metres_per_second,
         })
         .collect();
     Some(pb::MovementSnapshotPush {
@@ -439,6 +446,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn actual_speed_json_is_preserved_and_missing_speed_stays_invalid() {
+        let mut room = pb::RoomSnapshot { room_id: MAIN_WORLD_PUBLIC_ROOM_ID.into(), game_state: r#"{"room_id":"main-world-public","entities":[{"entity_id":1,"character_id":"a","scene_id":1,"x":2000.0,"y":2000.0,"dir_x":1.0,"dir_y":0.0,"moving":true,"last_input_frame":1,"speed_metres_per_second":2.0}]}"#.into(), ..Default::default() };
+        assert_eq!(
+            main_world_movement_snapshot_from_room(&room, 1)
+                .unwrap()
+                .entities[0]
+                .speed_metres_per_second,
+            2.0
+        );
+        room.game_state = room
+            .game_state
+            .replace(",\"speed_metres_per_second\":2.0", "");
+        let missing = main_world_movement_snapshot_from_room(&room, 1)
+            .unwrap()
+            .entities[0]
+            .speed_metres_per_second;
+        assert!(!main_world_valid_move_speed(missing));
+        for value in [f32::NAN, f32::INFINITY, -1.0, 0.0, 100.1] {
+            assert!(!main_world_valid_move_speed(value));
+        }
+    }
+
+    #[test]
     fn contract_centralizes_public_main_world_identifiers() {
         let contract = MAIN_WORLD_AUTHORITY_CONTRACT;
 
@@ -497,7 +527,7 @@ mod tests {
     fn frame_bundle_room_state_normalizes_to_movement_snapshot() {
         let snapshot = crate::game::myserver::protocol::pb::RoomSnapshot {
             room_id: MAIN_WORLD_PUBLIC_ROOM_ID.to_owned(),
-            game_state: r#"{"room_id":"main-world-public","scene_id":1,"entities":[{"entity_id":7,"character_id":"chr-a","scene_id":1,"x":2001.0,"y":1999.0,"dir_x":1.0,"dir_y":0.0,"moving":true,"last_input_frame":9}]}"#.to_owned(),
+            game_state: r#"{"room_id":"main-world-public","scene_id":1,"entities":[{"entity_id":7,"character_id":"chr-a","scene_id":1,"x":2001.0,"y":1999.0,"dir_x":1.0,"dir_y":0.0,"moving":true,"last_input_frame":9, "speed_metres_per_second": 4.0}]}"#.to_owned(),
             ..Default::default()
         };
         let push = main_world_movement_snapshot_from_room(&snapshot, 12).unwrap();
@@ -632,7 +662,8 @@ mod tests {
     fn movement_contract_freezes_cadence_speed_normalization_and_stop_semantics() {
         assert_eq!(MAIN_WORLD_AUTHORITY_TICKS_PER_SECOND, 20);
         assert_eq!(MAIN_WORLD_AUTHORITY_TICK_SECONDS, 0.05);
-        assert_eq!(MAIN_WORLD_MOVE_SPEED_METRES_PER_SECOND, 4.0);
+        assert!(main_world_valid_move_speed(2.0));
+        assert!(!main_world_valid_move_speed(0.0));
         assert_eq!(MAIN_WORLD_MOVE_DIR_KEEPALIVE_FRAMES, 1);
         assert_eq!(MAIN_WORLD_SERVER_CONTROL_STOP_FRAMES, 3);
         assert_eq!(MAIN_WORLD_MOVE_STOP_MESSAGES_PER_TRANSITION, 1);

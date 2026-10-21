@@ -258,7 +258,11 @@ fn cache_main_world_player_snapshot(
     snapshot: MainWorldSnapshotEvent,
     generation: u64,
 ) {
-    if snapshot.epoch < runtime.snapshot_epoch {
+    if snapshot
+        .entry_generation
+        .is_some_and(|expected| expected != generation)
+        || snapshot.epoch < runtime.snapshot_epoch
+    {
         return;
     }
     if snapshot.epoch > runtime.snapshot_epoch {
@@ -1275,6 +1279,7 @@ mod tests {
             frame_id: 1,
             entities: vec![
                 pb::EntityTransform {
+                    speed_metres_per_second: 4.0,
                     entity_id: 1,
                     character_id: "local".into(),
                     scene_id: 1,
@@ -1283,6 +1288,7 @@ mod tests {
                     ..Default::default()
                 },
                 pb::EntityTransform {
+                    speed_metres_per_second: 4.0,
                     entity_id: 2,
                     character_id: "remote".into(),
                     scene_id: 1,
@@ -1301,6 +1307,7 @@ mod tests {
             frame_id: 2,
             full_sync: false,
             entities: vec![pb::EntityTransform {
+                speed_metres_per_second: 4.0,
                 entity_id: 1,
                 character_id: "local".into(),
                 scene_id: 1,
@@ -1324,6 +1331,7 @@ mod tests {
             frame_id: 3,
             full_sync: true,
             entities: vec![pb::EntityTransform {
+                speed_metres_per_second: 4.0,
                 entity_id: 1,
                 character_id: "local".into(),
                 scene_id: 1,
@@ -1349,6 +1357,7 @@ mod tests {
             frame_id: 1,
             entities: vec![
                 pb::EntityTransform {
+                    speed_metres_per_second: 4.0,
                     entity_id: 1,
                     character_id: "local".into(),
                     scene_id: 1,
@@ -1357,6 +1366,7 @@ mod tests {
                     ..Default::default()
                 },
                 pb::EntityTransform {
+                    speed_metres_per_second: 4.0,
                     entity_id: 2,
                     character_id: "remote".into(),
                     scene_id: 1,
@@ -1378,6 +1388,7 @@ mod tests {
             full_sync: false,
             reason: super::super::main_world_contract::MAIN_WORLD_ROOM_SNAPSHOT_REASON.to_owned(),
             entities: vec![pb::EntityTransform {
+                speed_metres_per_second: 4.0,
                 entity_id: 1,
                 character_id: "local".into(),
                 scene_id: 1,
@@ -1413,6 +1424,7 @@ mod tests {
             full_sync: true,
             entities: vec![
                 pb::EntityTransform {
+                    speed_metres_per_second: 4.0,
                     entity_id: 1,
                     character_id: "local".into(),
                     scene_id: MAIN_WORLD_SERVER_SCENE_ID,
@@ -1421,6 +1433,7 @@ mod tests {
                     ..Default::default()
                 },
                 pb::EntityTransform {
+                    speed_metres_per_second: 4.0,
                     entity_id: 2,
                     character_id: "remote".into(),
                     scene_id: MAIN_WORLD_SERVER_SCENE_ID,
@@ -1438,6 +1451,7 @@ mod tests {
         let targeted = pb::MovementSnapshotPush {
             frame_id: 2,
             entities: vec![pb::EntityTransform {
+                speed_metres_per_second: 4.0,
                 entity_id: 1,
                 character_id: "local".into(),
                 scene_id: MAIN_WORLD_SERVER_SCENE_ID,
@@ -1485,6 +1499,7 @@ mod tests {
             frame_id: 1,
             entities: vec![
                 pb::EntityTransform {
+                    speed_metres_per_second: 4.0,
                     entity_id: 1,
                     character_id: "valid".into(),
                     scene_id: 1,
@@ -1493,6 +1508,7 @@ mod tests {
                     ..Default::default()
                 },
                 pb::EntityTransform {
+                    speed_metres_per_second: 4.0,
                     entity_id: 2,
                     character_id: "invalid".into(),
                     scene_id: 99,
@@ -1534,6 +1550,7 @@ mod tests {
             entities: entities
                 .iter()
                 .map(|(character, id, x, y)| pb::EntityTransform {
+                    speed_metres_per_second: 4.0,
                     entity_id: *id,
                     character_id: (*character).into(),
                     scene_id: MAIN_WORLD_SERVER_SCENE_ID,
@@ -1608,6 +1625,7 @@ mod tests {
         cache_main_world_player_snapshot(
             &mut runtime,
             MainWorldSnapshotEvent {
+                entry_generation: None,
                 epoch: 1,
                 source: MainWorldSnapshotSource::Movement,
                 complete_room_entities: false,
@@ -1618,6 +1636,7 @@ mod tests {
         cache_main_world_player_snapshot(
             &mut runtime,
             MainWorldSnapshotEvent {
+                entry_generation: None,
                 epoch: 1,
                 source: MainWorldSnapshotSource::Movement,
                 complete_room_entities: false,

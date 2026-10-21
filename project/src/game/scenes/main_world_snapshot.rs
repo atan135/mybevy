@@ -30,9 +30,17 @@ pub(in crate::game) struct MainWorldSnapshotEvent {
     /// A server restart or a fresh room membership starts a new epoch, so a
     /// lower frame in a newer epoch is valid while an old epoch is not.
     pub epoch: u64,
+    pub entry_generation: Option<u64>,
     pub source: MainWorldSnapshotSource,
     pub complete_room_entities: bool,
     pub push: pb::MovementSnapshotPush,
+}
+
+#[derive(Clone, Debug, Message)]
+pub(in crate::game) struct MainWorldMovementRejectEvent {
+    pub epoch: u64,
+    pub entry_generation: Option<u64>,
+    pub reject: pb::MovementRejectPush,
 }
 
 #[derive(Resource, Debug)]
@@ -43,6 +51,7 @@ pub(in crate::game) struct MainWorldSnapshotBusState {
     /// reading the raw MyServer event stream again.
     pub authority_activity_serial: u64,
     room_id: Option<String>,
+    entry_generation: Option<u64>,
     latest_frame: Option<u32>,
 }
 
@@ -52,6 +61,7 @@ impl Default for MainWorldSnapshotBusState {
             epoch: 0,
             authority_activity_serial: 0,
             room_id: None,
+            entry_generation: None,
             latest_frame: None,
         }
     }
@@ -92,6 +102,7 @@ pub(in crate::game) fn install_main_world_snapshot_bus(app: &mut App) {
     }
     app.init_resource::<MainWorldSnapshotBusState>()
         .add_message::<MainWorldSnapshotEvent>()
+        .add_message::<MainWorldMovementRejectEvent>()
         .configure_sets(
             Update,
             MainWorldSnapshotBusUpdateSet::Publish
@@ -113,17 +124,74 @@ fn publish_main_world_snapshot_events(
     mut events: MessageReader<MyServerEvent>,
     mut state: ResMut<MainWorldSnapshotBusState>,
     mut snapshots: MessageWriter<MainWorldSnapshotEvent>,
+    mut rejects: MessageWriter<MainWorldMovementRejectEvent>,
+    entry: Option<Res<super::main_world_entry::MainWorldEntryState>>,
+    session: Option<Res<crate::game::myserver::MyServerSession>>,
 ) {
+    let generation = entry.as_ref().map(|entry| entry.generation);
+    if state.entry_generation != generation {
+        state.entry_generation = generation;
+        state.start_new_epoch(MAIN_WORLD_PUBLIC_ROOM_ID);
+    }
+    let mut admission_open = entry.as_ref().is_none_or(|entry| {
+        use super::main_world_entry::MainWorldEntryPhase;
+        matches!(
+            entry.phase,
+            MainWorldEntryPhase::Active
+                | MainWorldEntryPhase::LoadingScene
+                | MainWorldEntryPhase::WaitingSceneReady
+        ) || (entry.phase == MainWorldEntryPhase::JoiningRoom && entry.join_acknowledged)
+            || (entry.phase == MainWorldEntryPhase::Recovering && entry.reconnect_room_acknowledged)
+    });
     for event in events.read() {
+        // Scoped request responses may outlive an entry attempt even on the same connection.
+        if let Some(entry) = entry.as_ref() {
+            let scoped = match event {
+                MyServerEvent::RoomJoinedScoped {
+                    correlation,
+                    connection_id,
+                    ..
+                } => Some((entry.join_attempt, *correlation, *connection_id)),
+                MyServerEvent::RoomReconnectedScoped {
+                    correlation,
+                    connection_id,
+                    ..
+                } => Some((entry.reconnect_attempt, *correlation, *connection_id)),
+                _ => None,
+            };
+            if let Some((expected, correlation, connection_id)) = scoped {
+                if expected != Some(correlation)
+                    || session.as_ref().is_none_or(|session| {
+                        !entry.accepts_scoped_authority_event(session, connection_id)
+                    })
+                {
+                    continue;
+                }
+            }
+        }
+
+        if !admission_open
+            && matches!(
+                event,
+                MyServerEvent::RoomStatePush(_)
+                    | MyServerEvent::FrameBundlePush(_)
+                    | MyServerEvent::MovementSnapshotPush(_)
+                    | MyServerEvent::MovementRejectPush(_)
+            )
+        {
+            continue;
+        }
         match event {
             MyServerEvent::RoomJoinedScoped { response, .. }
                 if response.ok && response.room_id == MAIN_WORLD_PUBLIC_ROOM_ID =>
             {
+                admission_open = true;
                 state.start_new_epoch(&response.room_id);
             }
             MyServerEvent::RoomReconnectedScoped { response, .. }
                 if response.ok && response.room_id == MAIN_WORLD_PUBLIC_ROOM_ID =>
             {
+                admission_open = true;
                 state.start_new_epoch(&response.room_id);
                 if let Some(recovery) = response.movement_recovery.as_ref() {
                     publish_snapshot(
@@ -193,6 +261,15 @@ fn publish_main_world_snapshot_events(
                     snapshot,
                 );
             }
+            MyServerEvent::MovementRejectPush(reject)
+                if reject.room_id == MAIN_WORLD_PUBLIC_ROOM_ID =>
+            {
+                rejects.write(MainWorldMovementRejectEvent {
+                    epoch: state.epoch,
+                    entry_generation: state.entry_generation,
+                    reject: reject.clone(),
+                });
+            }
             MyServerEvent::MovementSnapshotPush(push)
                 if push.room_id == MAIN_WORLD_PUBLIC_ROOM_ID =>
             {
@@ -242,6 +319,7 @@ fn publish_snapshot(
     );
     snapshots.write(MainWorldSnapshotEvent {
         epoch: state.epoch,
+        entry_generation: state.entry_generation,
         source,
         complete_room_entities,
         push,
@@ -251,6 +329,85 @@ fn publish_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delayed_scoped_recovery_cannot_publish_into_current_entry() {
+        use crate::framework::network::ConnectionId;
+        use crate::game::myserver::MyServerSession;
+        use crate::game::scenes::main_world_entry::MainWorldEntryState;
+        let connection = ConnectionId::from_raw(12);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_message::<MyServerEvent>()
+            .insert_resource(MainWorldEntryState {
+                generation: 8,
+                character_id: Some("current".into()),
+                authority_character_id: Some("current".into()),
+                authority_connection_id: Some(connection),
+                reconnect_attempt: Some(42),
+                ..Default::default()
+            })
+            .insert_resource(MyServerSession {
+                character_id: Some("current".into()),
+                connection_id: Some(connection),
+                ..Default::default()
+            });
+        install_main_world_snapshot_bus(&mut app);
+        app.update();
+        let epoch = app.world().resource::<MainWorldSnapshotBusState>().epoch;
+        for (correlation, connection_id) in [(41, connection), (42, ConnectionId::from_raw(11))] {
+            app.world_mut()
+                .write_message(MyServerEvent::RoomReconnectedScoped {
+                    correlation,
+                    seq: 1,
+                    connection_id,
+                    response: pb::RoomReconnectRes {
+                        ok: true,
+                        room_id: MAIN_WORLD_PUBLIC_ROOM_ID.into(),
+                        movement_recovery: Some(pb::MovementRecoveryState {
+                            frame_id: 90,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                });
+        }
+        app.update();
+        let state = app.world().resource::<MainWorldSnapshotBusState>();
+        assert_eq!(state.epoch, epoch);
+        assert_eq!(state.authority_activity_serial, 0);
+        app.world_mut()
+            .write_message(MyServerEvent::MovementSnapshotPush(
+                pb::MovementSnapshotPush {
+                    room_id: MAIN_WORLD_PUBLIC_ROOM_ID.into(),
+                    frame_id: 100,
+                    full_sync: true,
+                    ..Default::default()
+                },
+            ));
+        app.world_mut()
+            .write_message(MyServerEvent::RoomReconnectedScoped {
+                correlation: 42,
+                seq: 2,
+                connection_id: connection,
+                response: pb::RoomReconnectRes {
+                    ok: true,
+                    room_id: MAIN_WORLD_PUBLIC_ROOM_ID.into(),
+                    movement_recovery: Some(pb::MovementRecoveryState {
+                        frame_id: 91,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            });
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<MainWorldSnapshotBusState>()
+                .authority_activity_serial,
+            1
+        );
+    }
 
     #[test]
     fn complete_lower_frame_starts_a_new_epoch() {
